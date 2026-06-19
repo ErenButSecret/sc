@@ -5,22 +5,13 @@
     ║     StarterPlayerScripts LocalScript      ║
     ╚═══════════════════════════════════════════╝
     
-    Kullanım:
-    1. GAME_SCRIPTS tablosuna oyun ID ve loadstring URL'lerini ekle
-    2. UNIVERSAL_SCRIPT değişkenine genel script URL'ini yaz
-    3. Bu scripti StarterPlayerScripts içine LocalScript olarak koy
-    4. Oyun başladığında otomatik olarak doğru scripti çalıştırır
 ]]
 
 -- ═══════════════════════════════════════════
 -- YAPILANDIRMA
 -- ═══════════════════════════════════════════
 
--- Oyun ID → Script URL eşleştirmesi
--- [PlaceId] = "raw script URL"
 local GAME_SCRIPTS = {
-    -- ↓↓↓ Buraya oyunlarını ekle ↓↓↓
-
     [2753915549] = "https://raw.githubusercontent.com/KULLANICI/REPO/main/bloxfruits.lua",     -- Blox Fruits
     [1537690962] = "https://raw.githubusercontent.com/KULLANICI/REPO/main/yourbiarre.lua",     -- Your Bizarre Adventure
     [2809202155] = "https://raw.githubusercontent.com/KULLANICI/REPO/main/musclegends.lua",    -- Muscle Legends
@@ -28,12 +19,10 @@ local GAME_SCRIPTS = {
     [4872321990] = "https://raw.githubusercontent.com/KULLANICI/REPO/main/bedwars.lua",        -- BedWars
     [3260590327] = "https://raw.githubusercontent.com/KULLANICI/REPO/main/towerdefense.lua",   -- Tower Defense Simulator
 
-    -- Daha fazla oyun eklemek için:
     -- [OYUN_ID] = "SCRIPT_URL",
 }
 
--- Listede olmayan oyunlar için çalışacak genel script
-local UNIVERSAL_SCRIPT = "https://raw.githubusercontent.com/KULLANICI/REPO/main/universal.lua"
+local UNIVERSAL_SCRIPT = "https://raw.githubusercontent.com/ErenButSecret/sc/refs/heads/main/universal"
 
 -- ═══════════════════════════════════════════
 -- LOADER MOTORU
