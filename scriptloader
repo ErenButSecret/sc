@@ -12,7 +12,7 @@
 -- ═══════════════════════════════════════════
 
 local GAME_SCRIPTS = {
-    [1781891801654] = "https://raw.githubusercontent.com/ErenButSecret/sc/refs/heads/main/buildaboat)",     -- Build A Boat
+    [537413528] = "https://raw.githubusercontent.com/ErenButSecret/sc/refs/heads/main/buildaboat)",     -- Build A Boat
 
 
     -- [OYUN_ID] = "SCRIPT_URL",
