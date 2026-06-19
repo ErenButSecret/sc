@@ -1,0 +1,621 @@
+--[[
+
+    ╔═══════════════════════════════════════════╗
+    ║           🥝 KIWI HUB LOADER 🥝          ║
+    ║     Premium Game Loader for Roblox        ║
+    ║     StarterPlayerScripts LocalScript      ║
+    ╚═══════════════════════════════════════════╝
+
+]]
+
+-- ═══════════════════════════════════════════
+-- YAPILANDIRMA / CONFIG
+-- ═══════════════════════════════════════════
+local SCRIPT_URL = "https://raw.githubusercontent.com/ErenButSecret/sc/refs/heads/main/scriptloader"
+
+local HUB_TITLE    = "Kiwi Hub"
+local HUB_VERSION  = "v1.0.0"
+local ACCENT_COLOR = Color3.fromRGB(124, 179, 66)
+local ACCENT_DARK  = Color3.fromRGB(85, 139, 47)
+local BG_COLOR     = Color3.fromRGB(18, 18, 24)
+local CARD_COLOR   = Color3.fromRGB(28, 28, 38)
+local TEXT_COLOR   = Color3.fromRGB(235, 235, 245)
+local TEXT_DIM     = Color3.fromRGB(140, 140, 160)
+local DANGER_COLOR = Color3.fromRGB(239, 83, 80)
+local SUCCESS_COLOR= Color3.fromRGB(102, 187, 106)
+
+-- ═══════════════════════════════════════════
+-- SERVİSLER
+-- ═══════════════════════════════════════════
+local Players         = game:GetService("Players")
+local TweenService    = game:GetService("TweenService")
+local UserInputService= game:GetService("UserInputService")
+local RunService      = game:GetService("RunService")
+
+local player    = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- ═══════════════════════════════════════════
+-- YARDIMCI FONKSİYONLAR
+-- ═══════════════════════════════════════════
+local function createTween(instance, tweenInfo, properties)
+    local tw = TweenService:Create(instance, tweenInfo, properties)
+    tw:Play()
+    return tw
+end
+
+local function smoothTween(instance, duration, properties)
+    return createTween(instance,
+        TweenInfo.new(duration, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+        properties)
+end
+
+local function bounceTween(instance, duration, properties)
+    return createTween(instance,
+        TweenInfo.new(duration, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+        properties)
+end
+
+-- ═══════════════════════════════════════════
+-- PARTİKÜL SİSTEMİ
+-- ═══════════════════════════════════════════
+local particleConnections = {}
+
+local function spawnParticles(parent)
+    -- Partikülleri tutar
+    local particleContainer = Instance.new("Frame")
+    particleContainer.Name = "Particles"
+    particleContainer.Size = UDim2.new(1, 0, 1, 0)
+    particleContainer.BackgroundTransparency = 1
+    particleContainer.ZIndex = 0
+    particleContainer.Parent = parent
+
+    local function createParticle()
+        if not particleContainer or not particleContainer.Parent then return end
+
+        local p = Instance.new("Frame")
+        p.Size = UDim2.new(0, math.random(4, 10), 0, math.random(4, 10))
+        p.Position = UDim2.new(math.random() , 0, 1.05, 0)  -- ekranın altından başla
+        p.BackgroundColor3 = Color3.fromRGB(
+            math.random(80, 160),
+            math.random(160, 220),
+            math.random(40, 100)
+        )
+        p.BackgroundTransparency = math.random(20, 50) / 100
+        p.BorderSizePixel = 0
+        p.ZIndex = 1
+        p.Parent = particleContainer
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(1, 0)
+        corner.Parent = p
+
+        -- Yukarı doğru uç
+        local duration = math.random(30, 70) / 10  -- 3.0 - 7.0 saniye
+        local targetX  = p.Position.X.Scale + (math.random(-15, 15) / 100)
+
+        TweenService:Create(p, TweenInfo.new(duration, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
+            Position = UDim2.new(targetX, 0, -0.1, 0),
+            BackgroundTransparency = 1,
+            Size = UDim2.new(0, math.random(2, 6), 0, math.random(2, 6))
+        }):Play()
+
+        -- Süre sonunda temizle
+        task.delay(duration, function()
+            if p and p.Parent then p:Destroy() end
+        end)
+    end
+
+    -- Düzenli aralıklarla parçacık oluştur
+    local conn = RunService.Heartbeat:Connect(function()
+        if math.random(1, 8) == 1 then  -- her frame ~1/8 ihtimalle
+            pcall(createParticle)
+        end
+    end)
+    table.insert(particleConnections, conn)
+
+    return particleContainer
+end
+
+local function stopParticles()
+    for _, conn in ipairs(particleConnections) do
+        conn:Disconnect()
+    end
+    particleConnections = {}
+end
+
+-- ═══════════════════════════════════════════
+-- UI OLUŞTURMA
+-- ═══════════════════════════════════════════
+local function createLoaderUI()
+    -- Mevcut varsa kaldır
+    local existing = playerGui:FindFirstChild("KiwiHubLoader")
+    if existing then existing:Destroy() end
+
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "KiwiHubLoader"
+    screenGui.ResetOnSpawn = false
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    screenGui.IgnoreGuiInset = true
+
+    -- ═══ ARKA PLAN OVERLAY ═══
+    local overlay = Instance.new("Frame")
+    overlay.Name = "Overlay"
+    overlay.Size = UDim2.new(1, 0, 1, 0)
+    overlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    overlay.BackgroundTransparency = 1
+    overlay.BorderSizePixel = 0
+    overlay.Parent = screenGui
+
+    -- Partikülleri overlay'in üstünde ama kartın altında tut
+    local particleLayer = spawnParticles(overlay)
+
+    -- ═══ ANA KART ═══
+    local mainCard = Instance.new("Frame")
+    mainCard.Name = "MainCard"
+    mainCard.AnchorPoint = Vector2.new(0.5, 0.5)
+    mainCard.Position = UDim2.new(0.5, 0, 0.5, 0)
+    mainCard.Size = UDim2.new(0, 380, 0, 460)
+    mainCard.BackgroundColor3 = BG_COLOR
+    mainCard.BorderSizePixel = 0
+    mainCard.BackgroundTransparency = 1
+    mainCard.ZIndex = 2
+    mainCard.Parent = overlay
+
+    local mainCorner = Instance.new("UICorner")
+    mainCorner.CornerRadius = UDim.new(0, 16)
+    mainCorner.Parent = mainCard
+
+    -- Gölge
+    local cardShadow = Instance.new("ImageLabel")
+    cardShadow.AnchorPoint = Vector2.new(0.5, 0.5)
+    cardShadow.Position = UDim2.new(0.5, 0, 0.5, 4)
+    cardShadow.Size = UDim2.new(1, 40, 1, 40)
+    cardShadow.BackgroundTransparency = 1
+    cardShadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+    cardShadow.ImageTransparency = 0.6
+    cardShadow.ScaleType = Enum.ScaleType.Slice
+    cardShadow.SliceCenter = Rect.new(24, 24, 276, 276)
+    cardShadow.Image = "rbxassetid://6014261993"
+    cardShadow.ZIndex = 1
+    cardShadow.Parent = mainCard
+
+    -- Glow border
+    local borderStroke = Instance.new("UIStroke")
+    borderStroke.Color = ACCENT_COLOR
+    borderStroke.Thickness = 1.5
+    borderStroke.Transparency = 0.7
+    borderStroke.Parent = mainCard
+
+    -- ═══ HEADER ═══
+    local headerSection = Instance.new("Frame")
+    headerSection.Name = "Header"
+    headerSection.Size = UDim2.new(1, 0, 0, 140)
+    headerSection.BackgroundTransparency = 1
+    headerSection.ZIndex = 3
+    headerSection.Parent = mainCard
+
+    local kiwiIcon = Instance.new("TextLabel")
+    kiwiIcon.AnchorPoint = Vector2.new(0.5, 0)
+    kiwiIcon.Position = UDim2.new(0.5, 0, 0, 20)
+    kiwiIcon.Size = UDim2.new(0, 70, 0, 70)
+    kiwiIcon.BackgroundTransparency = 1
+    kiwiIcon.Text = "🥝"
+    kiwiIcon.TextSize = 52
+    kiwiIcon.Font = Enum.Font.GothamBold
+    kiwiIcon.TextColor3 = TEXT_COLOR
+    kiwiIcon.ZIndex = 3
+    kiwiIcon.Parent = headerSection
+
+    local iconGlow = Instance.new("Frame")
+    iconGlow.AnchorPoint = Vector2.new(0.5, 0.5)
+    iconGlow.Position = UDim2.new(0.5, 0, 0, 55)
+    iconGlow.Size = UDim2.new(0, 80, 0, 80)
+    iconGlow.BackgroundColor3 = ACCENT_COLOR
+    iconGlow.BackgroundTransparency = 0.85
+    iconGlow.ZIndex = 2
+    iconGlow.Parent = headerSection
+
+    local iconGlowCorner = Instance.new("UICorner")
+    iconGlowCorner.CornerRadius = UDim.new(1, 0)
+    iconGlowCorner.Parent = iconGlow
+
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.AnchorPoint = Vector2.new(0.5, 0)
+    titleLabel.Position = UDim2.new(0.5, 0, 0, 95)
+    titleLabel.Size = UDim2.new(1, -40, 0, 28)
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Text = HUB_TITLE
+    titleLabel.TextSize = 26
+    titleLabel.Font = Enum.Font.GothamBlack
+    titleLabel.TextColor3 = TEXT_COLOR
+    titleLabel.ZIndex = 3
+    titleLabel.Parent = headerSection
+
+    local versionLabel = Instance.new("TextLabel")
+    versionLabel.AnchorPoint = Vector2.new(0.5, 0)
+    versionLabel.Position = UDim2.new(0.5, 0, 0, 122)
+    versionLabel.Size = UDim2.new(1, -40, 0, 16)
+    versionLabel.BackgroundTransparency = 1
+    versionLabel.Text = HUB_VERSION
+    versionLabel.TextSize = 13
+    versionLabel.Font = Enum.Font.GothamMedium
+    versionLabel.TextColor3 = ACCENT_COLOR
+    versionLabel.ZIndex = 3
+    versionLabel.Parent = headerSection
+
+    -- ═══ AYIRICI ═══
+    local divider = Instance.new("Frame")
+    divider.AnchorPoint = Vector2.new(0.5, 0)
+    divider.Position = UDim2.new(0.5, 0, 0, 148)
+    divider.Size = UDim2.new(0.7, 0, 0, 1)
+    divider.BackgroundColor3 = ACCENT_COLOR
+    divider.BackgroundTransparency = 0.75
+    divider.BorderSizePixel = 0
+    divider.ZIndex = 3
+    divider.Parent = mainCard
+
+    -- ═══ BİLGİ BÖLÜMÜ ═══
+    local infoSection = Instance.new("Frame")
+    infoSection.AnchorPoint = Vector2.new(0.5, 0)
+    infoSection.Position = UDim2.new(0.5, 0, 0, 165)
+    infoSection.Size = UDim2.new(1, -50, 0, 100)
+    infoSection.BackgroundColor3 = CARD_COLOR
+    infoSection.BorderSizePixel = 0
+    infoSection.ZIndex = 3
+    infoSection.Parent = mainCard
+
+    local infoCorner = Instance.new("UICorner")
+    infoCorner.CornerRadius = UDim.new(0, 10)
+    infoCorner.Parent = infoSection
+
+    local playerInfoLabel = Instance.new("TextLabel")
+    playerInfoLabel.AnchorPoint = Vector2.new(0.5, 0)
+    playerInfoLabel.Position = UDim2.new(0.5, 0, 0, 12)
+    playerInfoLabel.Size = UDim2.new(1, -24, 0, 20)
+    playerInfoLabel.BackgroundTransparency = 1
+    playerInfoLabel.Text = "👤 Oyuncu: " .. player.Name
+    playerInfoLabel.TextSize = 14
+    playerInfoLabel.Font = Enum.Font.GothamMedium
+    playerInfoLabel.TextColor3 = TEXT_COLOR
+    playerInfoLabel.TextXAlignment = Enum.TextXAlignment.Left
+    playerInfoLabel.ZIndex = 4
+    playerInfoLabel.Parent = infoSection
+
+    local gameInfoLabel = Instance.new("TextLabel")
+    gameInfoLabel.AnchorPoint = Vector2.new(0.5, 0)
+    gameInfoLabel.Position = UDim2.new(0.5, 0, 0, 38)
+    gameInfoLabel.Size = UDim2.new(1, -24, 0, 20)
+    gameInfoLabel.BackgroundTransparency = 1
+    gameInfoLabel.Text = "🎮 Oyun ID: " .. tostring(game.PlaceId)
+    gameInfoLabel.TextSize = 14
+    gameInfoLabel.Font = Enum.Font.GothamMedium
+    gameInfoLabel.TextColor3 = TEXT_COLOR
+    gameInfoLabel.TextXAlignment = Enum.TextXAlignment.Left
+    gameInfoLabel.ZIndex = 4
+    gameInfoLabel.Parent = infoSection
+
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.AnchorPoint = Vector2.new(0.5, 0)
+    statusLabel.Position = UDim2.new(0.5, 0, 0, 68)
+    statusLabel.Size = UDim2.new(1, -24, 0, 20)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.Text = "⏳ Durum: Hazır"
+    statusLabel.TextSize = 14
+    statusLabel.Font = Enum.Font.GothamMedium
+    statusLabel.TextColor3 = SUCCESS_COLOR
+    statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+    statusLabel.ZIndex = 4
+    statusLabel.Parent = infoSection
+
+    -- ═══ PROGRESS BAR ═══
+    local progressBarBg = Instance.new("Frame")
+    progressBarBg.AnchorPoint = Vector2.new(0.5, 0)
+    progressBarBg.Position = UDim2.new(0.5, 0, 0, 280)
+    progressBarBg.Size = UDim2.new(1, -50, 0, 6)
+    progressBarBg.BackgroundColor3 = CARD_COLOR
+    progressBarBg.BorderSizePixel = 0
+    progressBarBg.ZIndex = 3
+    progressBarBg.Parent = mainCard
+
+    local progressBarBgCorner = Instance.new("UICorner")
+    progressBarBgCorner.CornerRadius = UDim.new(1, 0)
+    progressBarBgCorner.Parent = progressBarBg
+
+    local progressBarFill = Instance.new("Frame")
+    progressBarFill.Size = UDim2.new(0, 0, 1, 0)
+    progressBarFill.BackgroundColor3 = ACCENT_COLOR
+    progressBarFill.BorderSizePixel = 0
+    progressBarFill.ZIndex = 4
+    progressBarFill.Parent = progressBarBg
+
+    local progressFillCorner = Instance.new("UICorner")
+    progressFillCorner.CornerRadius = UDim.new(1, 0)
+    progressFillCorner.Parent = progressBarFill
+
+    local progressGlow = Instance.new("Frame")
+    progressGlow.AnchorPoint = Vector2.new(1, 0.5)
+    progressGlow.Position = UDim2.new(1, 0, 0.5, 0)
+    progressGlow.Size = UDim2.new(0, 12, 0, 12)
+    progressGlow.BackgroundColor3 = ACCENT_COLOR
+    progressGlow.BackgroundTransparency = 0.5
+    progressGlow.ZIndex = 5
+    progressGlow.Parent = progressBarFill
+
+    local progressGlowCorner = Instance.new("UICorner")
+    progressGlowCorner.CornerRadius = UDim.new(1, 0)
+    progressGlowCorner.Parent = progressGlow
+
+    -- ═══ YÜKLEME METNİ ═══
+    local loadingText = Instance.new("TextLabel")
+    loadingText.AnchorPoint = Vector2.new(0.5, 0)
+    loadingText.Position = UDim2.new(0.5, 0, 0, 295)
+    loadingText.Size = UDim2.new(1, -50, 0, 22)
+    loadingText.BackgroundTransparency = 1
+    loadingText.Text = ""
+    loadingText.TextSize = 12
+    loadingText.Font = Enum.Font.GothamMedium
+    loadingText.TextColor3 = TEXT_DIM
+    loadingText.ZIndex = 3
+    loadingText.Parent = mainCard
+
+    -- ═══ EXECUTE BUTONU ═══
+    local executeBtn = Instance.new("TextButton")
+    executeBtn.AnchorPoint = Vector2.new(0.5, 0)
+    executeBtn.Position = UDim2.new(0.5, 0, 0, 335)
+    executeBtn.Size = UDim2.new(1, -50, 0, 48)
+    executeBtn.BackgroundColor3 = ACCENT_COLOR
+    executeBtn.BorderSizePixel = 0
+    executeBtn.Text = "🚀  EXECUTE"
+    executeBtn.TextSize = 16
+    executeBtn.Font = Enum.Font.GothamBlack
+    executeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    executeBtn.AutoButtonColor = false
+    executeBtn.ZIndex = 3
+    executeBtn.Parent = mainCard
+
+    local executeBtnCorner = Instance.new("UICorner")
+    executeBtnCorner.CornerRadius = UDim.new(0, 12)
+    executeBtnCorner.Parent = executeBtn
+
+    local btnGradient = Instance.new("UIGradient")
+    btnGradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 200, 200))
+    })
+    btnGradient.Rotation = 90
+    btnGradient.Parent = executeBtn
+
+    local btnStroke = Instance.new("UIStroke")
+    btnStroke.Color = ACCENT_COLOR
+    btnStroke.Thickness = 1.5
+    btnStroke.Transparency = 0.5
+    btnStroke.Parent = executeBtn
+
+    -- ═══ KAPAT BUTONU ═══
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.AnchorPoint = Vector2.new(0.5, 0)
+    closeBtn.Position = UDim2.new(0.5, 0, 0, 395)
+    closeBtn.Size = UDim2.new(1, -50, 0, 36)
+    closeBtn.BackgroundColor3 = CARD_COLOR
+    closeBtn.BorderSizePixel = 0
+    closeBtn.Text = "✕  KAPAT"
+    closeBtn.TextSize = 13
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.TextColor3 = TEXT_DIM
+    closeBtn.AutoButtonColor = false
+    closeBtn.ZIndex = 3
+    closeBtn.Parent = mainCard
+
+    local closeBtnCorner = Instance.new("UICorner")
+    closeBtnCorner.CornerRadius = UDim.new(0, 10)
+    closeBtnCorner.Parent = closeBtn
+
+    -- ═══ ALT BİLGİ ═══
+    local footerLabel = Instance.new("TextLabel")
+    footerLabel.AnchorPoint = Vector2.new(0.5, 1)
+    footerLabel.Position = UDim2.new(0.5, 0, 1, -8)
+    footerLabel.Size = UDim2.new(1, -20, 0, 14)
+    footerLabel.BackgroundTransparency = 1
+    footerLabel.Text = "🥝 Kiwi Hub • Premium Loader"
+    footerLabel.TextSize = 10
+    footerLabel.Font = Enum.Font.Gotham
+    footerLabel.TextColor3 = TEXT_DIM
+    footerLabel.TextTransparency = 0.5
+    footerLabel.ZIndex = 3
+    footerLabel.Parent = mainCard
+
+    screenGui.Parent = playerGui
+
+    -- ═══════════════════════════════════════════
+    -- ANİMASYONLAR
+    -- ═══════════════════════════════════════════
+    mainCard.Size = UDim2.new(0, 0, 0, 0)
+    mainCard.BackgroundTransparency = 1
+
+    task.wait(0.3)
+
+    -- Overlay koyulaş (arka planı karartır)
+    smoothTween(overlay, 0.5, {BackgroundTransparency = 0.45})
+
+    task.wait(0.2)
+
+    -- Kart açılış
+    bounceTween(mainCard, 0.7, {
+        Size = UDim2.new(0, 380, 0, 460),
+        BackgroundTransparency = 0
+    })
+
+    -- İkon glow pulse
+    task.spawn(function()
+        while iconGlow and iconGlow.Parent do
+            createTween(iconGlow, TweenInfo.new(1.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+                BackgroundTransparency = 0.7,
+                Size = UDim2.new(0, 90, 0, 90)
+            })
+            task.wait(1.5)
+            createTween(iconGlow, TweenInfo.new(1.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+                BackgroundTransparency = 0.9,
+                Size = UDim2.new(0, 80, 0, 80)
+            })
+            task.wait(1.5)
+        end
+    end)
+
+    -- Border glow
+    task.spawn(function()
+        while borderStroke and borderStroke.Parent do
+            createTween(borderStroke, TweenInfo.new(2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Transparency = 0.3})
+            task.wait(2)
+            createTween(borderStroke, TweenInfo.new(2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Transparency = 0.8})
+            task.wait(2)
+        end
+    end)
+
+    -- ═══ HOVER EFEKTLERİ ═══
+    local isExecuting = false
+
+    executeBtn.MouseEnter:Connect(function()
+        if not isExecuting then
+            smoothTween(executeBtn, 0.25, {Size = UDim2.new(1, -44, 0, 50), BackgroundColor3 = ACCENT_DARK})
+            smoothTween(btnStroke, 0.25, {Transparency = 0})
+        end
+    end)
+
+    executeBtn.MouseLeave:Connect(function()
+        if not isExecuting then
+            smoothTween(executeBtn, 0.25, {Size = UDim2.new(1, -50, 0, 48), BackgroundColor3 = ACCENT_COLOR})
+            smoothTween(btnStroke, 0.25, {Transparency = 0.5})
+        end
+    end)
+
+    closeBtn.MouseEnter:Connect(function()
+        smoothTween(closeBtn, 0.2, {BackgroundColor3 = DANGER_COLOR, TextColor3 = TEXT_COLOR})
+    end)
+
+    closeBtn.MouseLeave:Connect(function()
+        smoothTween(closeBtn, 0.2, {BackgroundColor3 = CARD_COLOR, TextColor3 = TEXT_DIM})
+    end)
+
+    -- ═══ PROGRESS FONKSİYONLARI ═══
+    local function setProgress(percent, text)
+        smoothTween(progressBarFill, 0.4, {Size = UDim2.new(percent / 100, 0, 1, 0)})
+        if text then loadingText.Text = text end
+    end
+
+    local function setStatus(text, color)
+        statusLabel.Text = text
+        statusLabel.TextColor3 = color or TEXT_COLOR
+    end
+
+    -- ═══ UI KAPANMA ANİMASYONU (overlay açılır) ═══
+    local function closeLoader()
+        stopParticles()
+        smoothTween(mainCard, 0.5, {Size = UDim2.new(0, 0, 0, 0), BackgroundTransparency = 1})
+        -- Overlay tekrar şeffaflaşır → oyun arkaplanı normale döner
+        smoothTween(overlay, 0.5, {BackgroundTransparency = 1})
+        task.wait(0.6)
+        screenGui:Destroy()
+    end
+
+    -- ═══ EXECUTE ═══
+    executeBtn.MouseButton1Click:Connect(function()
+        if isExecuting then return end
+        isExecuting = true
+
+        smoothTween(executeBtn, 0.3, {BackgroundColor3 = TEXT_DIM})
+        executeBtn.Text = "⏳  YÜKLENIYOR..."
+
+        setProgress(10, "🔄 Bağlantı kuruluyor...")
+        setStatus("⏳ Durum: Yükleniyor...", Color3.fromRGB(255, 193, 7))
+        task.wait(0.5)
+
+        setProgress(30, "📡 Script indiriliyor...")
+        task.wait(0.3)
+
+        local success, result = pcall(function()
+            local response = game:HttpGet(SCRIPT_URL)
+            loadstring(response)()
+            return true
+        end)
+
+        if success then
+            setProgress(70, "✅ Script yüklendi!")
+            task.wait(0.3)
+            setProgress(100, "🎉 Kiwi Hub aktif!")
+            setStatus("✅ Durum: Başarılı!", SUCCESS_COLOR)
+
+            smoothTween(executeBtn, 0.3, {BackgroundColor3 = SUCCESS_COLOR})
+            executeBtn.Text = "✅  BAŞARILI"
+            smoothTween(borderStroke, 0.5, {Color = SUCCESS_COLOR, Transparency = 0.2})
+
+            task.wait(2)
+            closeLoader()
+        else
+            setProgress(0, "")
+            setStatus("❌ Durum: Hata oluştu!", DANGER_COLOR)
+            loadingText.Text = "⚠️ " .. tostring(result)
+
+            smoothTween(executeBtn, 0.3, {BackgroundColor3 = DANGER_COLOR})
+            executeBtn.Text = "❌  HATA"
+            smoothTween(borderStroke, 0.3, {Color = DANGER_COLOR, Transparency = 0.2})
+
+            task.wait(2)
+
+            smoothTween(executeBtn, 0.3, {BackgroundColor3 = ACCENT_COLOR})
+            executeBtn.Text = "🔄  TEKRAR DENE"
+            smoothTween(borderStroke, 0.5, {Color = ACCENT_COLOR, Transparency = 0.7})
+            isExecuting = false
+        end
+    end)
+
+    -- ═══ KAPAT ═══
+    closeBtn.MouseButton1Click:Connect(function()
+        closeLoader()
+    end)
+
+    -- ═══ SÜRÜKLEME ═══
+    local dragging  = false
+    local dragStart = nil
+    local startPos  = nil
+
+    headerSection.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or
+           input.UserInputType == Enum.UserInputType.Touch then
+            dragging  = true
+            dragStart = input.Position
+            startPos  = mainCard.Position
+        end
+    end)
+
+    headerSection.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or
+           input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or
+           input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            mainCard.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+
+    return screenGui
+end
+
+-- ═══════════════════════════════════════════
+-- BAŞLAT
+-- ═══════════════════════════════════════════
+task.wait(1)
+createLoaderUI()
+
+print("═══════════════════════════════════════")
+print("  🥝 Kiwi Hub Loader v1.0.0")
+print("  📌 Loader başarıyla yüklendi!")
+print("═══════════════════════════════════════")
