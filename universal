@@ -1396,6 +1396,7 @@ closeBtn.MouseButton1Click:Connect(function()
 
     tween(mainFrame, 0.3, {Size = UDim2.new(0, 0, 0, 0), BackgroundTransparency = 1})
     task.wait(0.35)
+    _G[UNIQUE_KEY] = nil
     screenGui:Destroy()
 end)
 
@@ -1422,10 +1423,7 @@ openTween:Play()
 
 task.wait(0.3)
 
--- İlk tabı aç
-tabButtons["Player"].Button.MouseButton1Click:Fire()
 
--- Karakter yenilendiğinde fly/noclip düzelt
 player.CharacterAdded:Connect(function()
     task.wait(1)
     if State.FlyEnabled then
