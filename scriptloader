@@ -1,0 +1,91 @@
+--[[
+    ╔═══════════════════════════════════════════╗
+    ║        🥝 KIWI HUB - GAME LOADER 🥝      ║
+    ║     Oyun ID'ye Göre Script Yükleyici      ║
+    ║     StarterPlayerScripts LocalScript      ║
+    ╚═══════════════════════════════════════════╝
+    
+    Kullanım:
+    1. GAME_SCRIPTS tablosuna oyun ID ve loadstring URL'lerini ekle
+    2. UNIVERSAL_SCRIPT değişkenine genel script URL'ini yaz
+    3. Bu scripti StarterPlayerScripts içine LocalScript olarak koy
+    4. Oyun başladığında otomatik olarak doğru scripti çalıştırır
+]]
+
+-- ═══════════════════════════════════════════
+-- YAPILANDIRMA
+-- ═══════════════════════════════════════════
+
+-- Oyun ID → Script URL eşleştirmesi
+-- [PlaceId] = "raw script URL"
+local GAME_SCRIPTS = {
+    -- ↓↓↓ Buraya oyunlarını ekle ↓↓↓
+
+    [2753915549] = "https://raw.githubusercontent.com/KULLANICI/REPO/main/bloxfruits.lua",     -- Blox Fruits
+    [1537690962] = "https://raw.githubusercontent.com/KULLANICI/REPO/main/yourbiarre.lua",     -- Your Bizarre Adventure
+    [2809202155] = "https://raw.githubusercontent.com/KULLANICI/REPO/main/musclegends.lua",    -- Muscle Legends
+    [6284583030] = "https://raw.githubusercontent.com/KULLANICI/REPO/main/petsimulatox.lua",   -- Pet Simulator X
+    [4872321990] = "https://raw.githubusercontent.com/KULLANICI/REPO/main/bedwars.lua",        -- BedWars
+    [3260590327] = "https://raw.githubusercontent.com/KULLANICI/REPO/main/towerdefense.lua",   -- Tower Defense Simulator
+
+    -- Daha fazla oyun eklemek için:
+    -- [OYUN_ID] = "SCRIPT_URL",
+}
+
+-- Listede olmayan oyunlar için çalışacak genel script
+local UNIVERSAL_SCRIPT = "https://raw.githubusercontent.com/KULLANICI/REPO/main/universal.lua"
+
+-- ═══════════════════════════════════════════
+-- LOADER MOTORU
+-- ═══════════════════════════════════════════
+
+local placeId = game.PlaceId
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+
+local function log(msg)
+    print("[Kiwi Hub] " .. msg)
+end
+
+log("═══════════════════════════════════════")
+log("🥝 Kiwi Hub Loader v2.0.0")
+log("👤 Oyuncu: " .. player.Name)
+log("🎮 Oyun ID: " .. tostring(placeId))
+log("═══════════════════════════════════════")
+
+-- Oyun ID kontrol et
+local scriptUrl = GAME_SCRIPTS[placeId]
+
+if scriptUrl then
+    log("✅ Oyun tespit edildi! Özel script yükleniyor...")
+    log("📌 URL: " .. scriptUrl)
+else
+    log("⚠️ Oyun listede yok. Universal script yükleniyor...")
+    log("📌 URL: " .. UNIVERSAL_SCRIPT)
+    scriptUrl = UNIVERSAL_SCRIPT
+end
+
+-- Script'i çalıştır
+local success, err = pcall(function()
+    loadstring(game:HttpGet(scriptUrl, true))()
+end)
+
+if success then
+    log("🎉 Script başarıyla yüklendi!")
+else
+    log("❌ Hata: " .. tostring(err))
+
+    -- Hata durumunda 5 saniye bekleyip tekrar dene
+    log("🔄 5 saniye sonra tekrar denenecek...")
+    task.wait(5)
+
+    local retrySuccess, retryErr = pcall(function()
+        loadstring(game:HttpGet(scriptUrl, true))()
+    end)
+
+    if retrySuccess then
+        log("🎉 Tekrar denemede başarılı!")
+    else
+        log("❌ Tekrar deneme başarısız: " .. tostring(retryErr))
+    end
+end
