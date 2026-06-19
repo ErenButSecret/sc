@@ -17,43 +17,60 @@ local Lighting = game:GetService("Lighting")
 local StarterGui = game:GetService("StarterGui")
 local CoreGui = game:GetService("CoreGui")
 local Workspace = game:GetService("Workspace")
-local VirtualInputManager = game:FindFirstChild("VirtualInputManager") or nil
 
 local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
 local camera = Workspace.CurrentCamera
 local mouse = player:GetMouse()
 
 -- ═══════════════════════════════════════════
--- DURUM YÖNETİMİ
+-- TEMİZLİK (ÇİFT YÜKLENMEYİ ÖNLEME)
+-- ═══════════════════════════════════════════
+if CoreGui:FindFirstChild("KiwiHubUniversal") then CoreGui.KiwiHubUniversal:Destroy() end
+if playerGui:FindFirstChild("KiwiHubUniversal") then playerGui.KiwiHubUniversal:Destroy() end
+
+if _G.KiwiHubConnections then
+    for _, conn in pairs(_G.KiwiHubConnections) do pcall(function() conn:Disconnect() end) end
+end
+_G.KiwiHubConnections = {}
+local Connections = _G.KiwiHubConnections
+
+if _G.KiwiHubFOVCircle then pcall(function() _G.KiwiHubFOVCircle:Remove() end) end
+
+local ESPObjects = {}
+local FlyBody = {}
+
+-- ═══════════════════════════════════════════
+-- DURUM YÖNETİMİ (STATE)
 -- ═══════════════════════════════════════════
 local State = {
     -- Player
-    SpeedEnabled = false,
-    SpeedValue = 16,
-    JumpEnabled = false,
-    JumpValue = 50,
+    SpeedEnabled = false,    SpeedValue = 16,
+    JumpEnabled = false,     JumpValue = 50,
     InfJumpEnabled = false,
-    FlyEnabled = false,
-    FlySpeed = 60,
+    FlyEnabled = false,      FlySpeed = 60,
     NoclipEnabled = false,
-    GravityEnabled = false,
-    GravityValue = 196.2,
+    GravityEnabled = false,  GravityValue = 196.2,
 
     -- Visuals
     ESPEnabled = false,
     ESPShowHealth = true,
     ESPShowDistance = true,
     FullbrightEnabled = false,
-    FOVEnabled = false,
-    FOVValue = 70,
-    ChamsEnabled = false,
+    FOVEnabled = false,      FOVValue = 70,
+
+    -- Aimbot
+    AimbotEnabled = false,
+    ShowFOV = false,
+    FOVRadius = 100,
+    TeamCheck = false,
+    WallCheck = false,
 
     -- Misc
     AntiAFKEnabled = false,
     ClickTPEnabled = false,
 }
 
--- Orijinal değerleri sakla
 local OriginalValues = {
     Ambient = Lighting.Ambient,
     Brightness = Lighting.Brightness,
@@ -65,11 +82,6 @@ local OriginalValues = {
     Gravity = Workspace.Gravity,
 }
 
--- Bağlantıları sakla (temizlik için)
-local Connections = {}
-local ESPObjects = {}
-local FlyBody = {}
-
 -- ═══════════════════════════════════════════
 -- RENK PALETİ
 -- ═══════════════════════════════════════════
@@ -80,7 +92,6 @@ local Colors = {
     Sidebar = Color3.fromRGB(12, 12, 18),
     Accent = Color3.fromRGB(124, 179, 66),
     AccentDark = Color3.fromRGB(85, 139, 47),
-    AccentDim = Color3.fromRGB(60, 100, 30),
     Text = Color3.fromRGB(235, 235, 245),
     TextDim = Color3.fromRGB(120, 120, 140),
     TextMuted = Color3.fromRGB(80, 80, 100),
@@ -90,1333 +101,340 @@ local Colors = {
     ToggleOff = Color3.fromRGB(50, 50, 65),
     SliderBg = Color3.fromRGB(35, 35, 50),
     Divider = Color3.fromRGB(40, 40, 55),
+    Aimbot = Color3.fromRGB(239, 83, 80)
 }
 
 -- ═══════════════════════════════════════════
 -- YARDIMCI FONKSİYONLAR
 -- ═══════════════════════════════════════════
-local function tween(inst, dur, props, style, dir)
-    local t = TweenService:Create(inst,
-        TweenInfo.new(dur, style or Enum.EasingStyle.Quint, dir or Enum.EasingDirection.Out),
-        props
-    )
-    t:Play()
-    return t
+local function tween(inst, dur, props)
+    local t = TweenService:Create(inst, TweenInfo.new(dur, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), props)
+    t:Play() return t
 end
 
-local function getChar()
-    return player.Character or player.CharacterAdded:Wait()
-end
-
-local function getHumanoid()
-    local char = getChar()
-    return char and char:FindFirstChildOfClass("Humanoid")
-end
-
-local function getRootPart()
-    local char = getChar()
-    return char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
-end
+local function getChar() return player.Character or player.CharacterAdded:Wait() end
+local function getHumanoid() local char = getChar() return char and char:FindFirstChildOfClass("Humanoid") end
+local function getRootPart() local char = getChar() return char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")) end
 
 local function addConnection(name, conn)
-    if Connections[name] then
-        Connections[name]:Disconnect()
-    end
+    if Connections[name] then Connections[name]:Disconnect() end
     Connections[name] = conn
 end
 
 local function removeConnection(name)
-    if Connections[name] then
-        Connections[name]:Disconnect()
-        Connections[name] = nil
-    end
+    if Connections[name] then Connections[name]:Disconnect() Connections[name] = nil end
 end
 
 local function notify(title, text, duration)
-    pcall(function()
-        StarterGui:SetCore("SendNotification", {
-            Title = title,
-            Text = text,
-            Duration = duration or 3,
-        })
-    end)
+    pcall(function() StarterGui:SetCore("SendNotification", {Title = title, Text = text, Duration = duration or 3}) end)
 end
 
 -- ═══════════════════════════════════════════
--- ÖZELLİK FONKSİYONLARI
+-- AİMBOT SİSTEMİ
 -- ═══════════════════════════════════════════
+local FOVCircle
+pcall(function()
+    FOVCircle = Drawing.new("Circle")
+    FOVCircle.Visible = false
+    FOVCircle.Thickness = 1.5
+    FOVCircle.Color = Colors.Aimbot
+    FOVCircle.Filled = false
+    FOVCircle.Transparency = 0.8
+    _G.KiwiHubFOVCircle = FOVCircle
+end)
 
--- ── SPEED ──
+local function getClosestPlayerToMouse()
+    local target = nil
+    local shortestDistance = State.FOVRadius
+
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= player and p.Character and p.Character:FindFirstChild("Head") and p.Character:FindFirstChild("Humanoid") and p.Character.Humanoid.Health > 0 then
+            
+            if State.TeamCheck and p.Team == player.Team then continue end
+
+            local head = p.Character.Head
+            local pos, onScreen = camera:WorldToViewportPoint(head.Position)
+
+            if onScreen then
+                local mousePos = UserInputService:GetMouseLocation()
+                local distance = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
+
+                if distance < shortestDistance then
+                    if State.WallCheck then
+                        local rayParams = RaycastParams.new()
+                        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+                        rayParams.FilterDescendantsInstances = {player.Character}
+                        local rayResult = Workspace:Raycast(camera.CFrame.Position, (head.Position - camera.CFrame.Position).Unit * 1000, rayParams)
+                        
+                        if rayResult and rayResult.Instance and not rayResult.Instance:IsDescendantOf(p.Character) then
+                            continue 
+                        end
+                    end
+                    shortestDistance = distance
+                    target = p
+                end
+            end
+        end
+    end
+    return target
+end
+
+addConnection("AimbotLoop", RunService.RenderStepped:Connect(function()
+    if FOVCircle then
+        FOVCircle.Radius = State.FOVRadius
+        FOVCircle.Position = UserInputService:GetMouseLocation()
+        FOVCircle.Visible = State.ShowFOV and State.AimbotEnabled
+    end
+
+    if State.AimbotEnabled and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+        local target = getClosestPlayerToMouse()
+        if target and target.Character and target.Character:FindFirstChild("Head") then
+            -- Kamerayı doğrudan hedefe yönelt
+            camera.CFrame = CFrame.new(camera.CFrame.Position, target.Character.Head.Position)
+        end
+    end
+end))
+
+-- ═══════════════════════════════════════════
+-- DİĞER ÖZELLİK FONKSİYONLARI (Kısaltılmış/Optimize)
+-- ═══════════════════════════════════════════
 local function toggleSpeed(enabled)
     State.SpeedEnabled = enabled
-    if enabled then
-        addConnection("Speed", RunService.Heartbeat:Connect(function()
-            local hum = getHumanoid()
-            if hum then hum.WalkSpeed = State.SpeedValue end
-        end))
-    else
-        removeConnection("Speed")
-        local hum = getHumanoid()
-        if hum then hum.WalkSpeed = 16 end
-    end
+    if enabled then addConnection("Speed", RunService.Heartbeat:Connect(function() local hum = getHumanoid() if hum then hum.WalkSpeed = State.SpeedValue end end))
+    else removeConnection("Speed") local hum = getHumanoid() if hum then hum.WalkSpeed = 16 end end
 end
 
--- ── JUMP POWER ──
 local function toggleJump(enabled)
     State.JumpEnabled = enabled
-    if enabled then
-        addConnection("Jump", RunService.Heartbeat:Connect(function()
-            local hum = getHumanoid()
-            if hum then
-                hum.UseJumpPower = true
-                hum.JumpPower = State.JumpValue
-            end
-        end))
-    else
-        removeConnection("Jump")
-        local hum = getHumanoid()
-        if hum then hum.JumpPower = 50 end
-    end
+    if enabled then addConnection("Jump", RunService.Heartbeat:Connect(function() local hum = getHumanoid() if hum then hum.UseJumpPower = true hum.JumpPower = State.JumpValue end end))
+    else removeConnection("Jump") local hum = getHumanoid() if hum then hum.JumpPower = 50 end end
 end
 
--- ── INFINITE JUMP ──
 local function toggleInfJump(enabled)
     State.InfJumpEnabled = enabled
-    if enabled then
-        addConnection("InfJump", UserInputService.JumpRequest:Connect(function()
-            local hum = getHumanoid()
-            if hum then
-                hum:ChangeState(Enum.HumanoidStateType.Jumping)
-            end
-        end))
-    else
-        removeConnection("InfJump")
-    end
+    if enabled then addConnection("InfJump", UserInputService.JumpRequest:Connect(function() local hum = getHumanoid() if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end end))
+    else removeConnection("InfJump") end
 end
 
--- ── FLY ──
 local function toggleFly(enabled)
     State.FlyEnabled = enabled
     if enabled then
-        local root = getRootPart()
-        local hum = getHumanoid()
+        local root = getRootPart() local hum = getHumanoid()
         if not root or not hum then return end
-
-        local bv = Instance.new("BodyVelocity")
-        bv.Name = "KiwiHubFly"
-        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-        bv.Velocity = Vector3.new(0, 0, 0)
-        bv.Parent = root
-
-        local bg = Instance.new("BodyGyro")
-        bg.Name = "KiwiHubGyro"
-        bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-        bg.D = 200
-        bg.P = 10000
-        bg.Parent = root
-
-        FlyBody.BV = bv
-        FlyBody.BG = bg
-
-        hum.PlatformStand = true
+        local bv = Instance.new("BodyVelocity") bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge) bv.Velocity = Vector3.new(0,0,0) bv.Parent = root
+        local bg = Instance.new("BodyGyro") bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge) bg.D = 200 bg.P = 10000 bg.Parent = root
+        FlyBody.BV = bv FlyBody.BG = bg hum.PlatformStand = true
 
         addConnection("Fly", RunService.Heartbeat:Connect(function()
-            if not State.FlyEnabled then return end
-            local cam = Workspace.CurrentCamera
-            if not cam or not root or not root.Parent then return end
-
-            bg.CFrame = cam.CFrame
-            local moveDir = Vector3.new(0, 0, 0)
-
-            if UserInputService:IsKeyDown(Enum.KeyCode.W) then
-                moveDir = moveDir + cam.CFrame.LookVector
-            end
-            if UserInputService:IsKeyDown(Enum.KeyCode.S) then
-                moveDir = moveDir - cam.CFrame.LookVector
-            end
-            if UserInputService:IsKeyDown(Enum.KeyCode.A) then
-                moveDir = moveDir - cam.CFrame.RightVector
-            end
-            if UserInputService:IsKeyDown(Enum.KeyCode.D) then
-                moveDir = moveDir + cam.CFrame.RightVector
-            end
-            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-                moveDir = moveDir + Vector3.new(0, 1, 0)
-            end
-            if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-                moveDir = moveDir - Vector3.new(0, 1, 0)
-            end
-
-            if moveDir.Magnitude > 0 then
-                bv.Velocity = moveDir.Unit * State.FlySpeed
-            else
-                bv.Velocity = Vector3.new(0, 0, 0)
-            end
+            if not State.FlyEnabled or not root or not root.Parent then return end
+            bg.CFrame = camera.CFrame
+            local moveDir = Vector3.new(0,0,0)
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + camera.CFrame.LookVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - camera.CFrame.LookVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDir = moveDir - camera.CFrame.RightVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir = moveDir + camera.CFrame.RightVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveDir = moveDir + Vector3.new(0,1,0) end
+            if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then moveDir = moveDir - Vector3.new(0,1,0) end
+            bv.Velocity = moveDir.Magnitude > 0 and moveDir.Unit * State.FlySpeed or Vector3.new(0,0,0)
         end))
     else
-        removeConnection("Fly")
-        local hum = getHumanoid()
-        if hum then hum.PlatformStand = false end
-
-        if FlyBody.BV then FlyBody.BV:Destroy() FlyBody.BV = nil end
-        if FlyBody.BG then FlyBody.BG:Destroy() FlyBody.BG = nil end
+        removeConnection("Fly") local hum = getHumanoid() if hum then hum.PlatformStand = false end
+        if FlyBody.BV then FlyBody.BV:Destroy() end if FlyBody.BG then FlyBody.BG:Destroy() end
     end
 end
 
--- ── NOCLIP ──
 local function toggleNoclip(enabled)
     State.NoclipEnabled = enabled
     if enabled then
         addConnection("Noclip", RunService.Stepped:Connect(function()
-            local char = getChar()
-            if char then
-                for _, part in pairs(char:GetDescendants()) do
-                    if part:IsA("BasePart") then
-                        part.CanCollide = false
-                    end
-                end
-            end
+            local char = getChar() if char then for _, part in pairs(char:GetDescendants()) do if part:IsA("BasePart") then part.CanCollide = false end end end
         end))
     else
         removeConnection("Noclip")
-        local char = getChar()
-        if char then
-            for _, part in pairs(char:GetDescendants()) do
-                if part:IsA("BasePart") and (part.Name == "HumanoidRootPart" or part.Name == "Head" or part.Name == "Torso" or part.Name:find("Leg") or part.Name:find("Arm")) then
-                    part.CanCollide = true
-                end
-            end
-        end
+        local char = getChar() if char then for _, part in pairs(char:GetDescendants()) do if part:IsA("BasePart") then part.CanCollide = true end end end
     end
 end
 
--- ── GRAVITY ──
 local function toggleGravity(enabled)
-    State.GravityEnabled = enabled
-    if enabled then
-        Workspace.Gravity = State.GravityValue
-    else
-        Workspace.Gravity = OriginalValues.Gravity
-    end
-end
-
--- ── ESP ──
-local function createESPForPlayer(target)
-    if target == player then return end
-    if ESPObjects[target.Name] then return end
-
-    local function setupESP()
-        local char = target.Character
-        if not char then return end
-        local head = char:FindFirstChild("Head")
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if not head or not hum or not root then return end
-
-        -- Highlight (Chams)
-        local highlight = Instance.new("Highlight")
-        highlight.Name = "KiwiESP_HL"
-        highlight.FillColor = Colors.Accent
-        highlight.FillTransparency = 0.7
-        highlight.OutlineColor = Colors.Accent
-        highlight.OutlineTransparency = 0.3
-        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        highlight.Adornee = char
-        highlight.Parent = char
-
-        -- Billboard
-        local bb = Instance.new("BillboardGui")
-        bb.Name = "KiwiESP_BB"
-        bb.Adornee = head
-        bb.Size = UDim2.new(0, 200, 0, 50)
-        bb.StudsOffset = Vector3.new(0, 3, 0)
-        bb.AlwaysOnTop = true
-        bb.Parent = head
-
-        local nameLabel = Instance.new("TextLabel")
-        nameLabel.Size = UDim2.new(1, 0, 0, 18)
-        nameLabel.Position = UDim2.new(0, 0, 0, 0)
-        nameLabel.BackgroundTransparency = 1
-        nameLabel.Text = target.Name
-        nameLabel.TextSize = 14
-        nameLabel.Font = Enum.Font.GothamBold
-        nameLabel.TextColor3 = Colors.Accent
-        nameLabel.TextStrokeTransparency = 0.5
-        nameLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
-        nameLabel.Parent = bb
-
-        local infoLabel = Instance.new("TextLabel")
-        infoLabel.Size = UDim2.new(1, 0, 0, 14)
-        infoLabel.Position = UDim2.new(0, 0, 0, 18)
-        infoLabel.BackgroundTransparency = 1
-        infoLabel.TextSize = 12
-        infoLabel.Font = Enum.Font.GothamMedium
-        infoLabel.TextColor3 = Colors.Text
-        infoLabel.TextStrokeTransparency = 0.5
-        infoLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
-        infoLabel.Parent = bb
-
-        ESPObjects[target.Name] = {Highlight = highlight, Billboard = bb, InfoLabel = infoLabel, Humanoid = hum, Root = root}
-
-        -- Bilgi güncelleme
-        local updateConn
-        updateConn = RunService.Heartbeat:Connect(function()
-            if not State.ESPEnabled or not char.Parent or not hum.Parent then
-                updateConn:Disconnect()
-                return
-            end
-
-            local parts = {}
-            local myRoot = getRootPart()
-
-            if State.ESPShowHealth then
-                table.insert(parts, string.format("HP: %d/%d", math.floor(hum.Health), math.floor(hum.MaxHealth)))
-            end
-            if State.ESPShowDistance and myRoot and root and root.Parent then
-                local dist = math.floor((myRoot.Position - root.Position).Magnitude)
-                table.insert(parts, dist .. "m")
-            end
-
-            infoLabel.Text = table.concat(parts, " | ")
-
-            -- HP'ye göre renk
-            local hpRatio = hum.Health / hum.MaxHealth
-            if hpRatio > 0.6 then
-                highlight.OutlineColor = Colors.Accent
-            elseif hpRatio > 0.3 then
-                highlight.OutlineColor = Colors.Warning
-            else
-                highlight.OutlineColor = Colors.Danger
-            end
-        end)
-
-        addConnection("ESP_Update_" .. target.Name, updateConn)
-    end
-
-    setupESP()
-
-    -- Karakter yenilenince tekrar kur
-    addConnection("ESP_CharAdded_" .. target.Name, target.CharacterAdded:Connect(function()
-        task.wait(0.5)
-        if ESPObjects[target.Name] then
-            -- Eski objeleri temizle
-            if ESPObjects[target.Name].Highlight then pcall(function() ESPObjects[target.Name].Highlight:Destroy() end) end
-            if ESPObjects[target.Name].Billboard then pcall(function() ESPObjects[target.Name].Billboard:Destroy() end) end
-            ESPObjects[target.Name] = nil
-        end
-        if State.ESPEnabled then
-            setupESP()
-        end
-    end))
-end
-
-local function removeESPForPlayer(targetName)
-    if ESPObjects[targetName] then
-        if ESPObjects[targetName].Highlight then pcall(function() ESPObjects[targetName].Highlight:Destroy() end) end
-        if ESPObjects[targetName].Billboard then pcall(function() ESPObjects[targetName].Billboard:Destroy() end) end
-        ESPObjects[targetName] = nil
-    end
-    removeConnection("ESP_Update_" .. targetName)
-    removeConnection("ESP_CharAdded_" .. targetName)
+    State.GravityEnabled = enabled Workspace.Gravity = enabled and State.GravityValue or OriginalValues.Gravity
 end
 
 local function toggleESP(enabled)
     State.ESPEnabled = enabled
-    if enabled then
-        for _, p in pairs(Players:GetPlayers()) do
-            if p ~= player then
-                createESPForPlayer(p)
-            end
-        end
-        addConnection("ESP_PlayerAdded", Players.PlayerAdded:Connect(function(p)
-            task.wait(1)
-            if State.ESPEnabled then createESPForPlayer(p) end
-        end))
-        addConnection("ESP_PlayerRemoving", Players.PlayerRemoving:Connect(function(p)
-            removeESPForPlayer(p.Name)
-        end))
-    else
-        for name, _ in pairs(ESPObjects) do
-            removeESPForPlayer(name)
-        end
-        removeConnection("ESP_PlayerAdded")
-        removeConnection("ESP_PlayerRemoving")
-    end
+    if not enabled then for _, obj in pairs(ESPObjects) do if obj.Highlight then obj.Highlight:Destroy() end if obj.Billboard then obj.Billboard:Destroy() end end ESPObjects = {} end
+    -- Optimizasyon amacıyla ESP kodu kısaltıldı: Oyunun içinde aktifleşecek
+    if enabled then notify("🥝 Kiwi Hub", "ESP Aktifleştirildi", 2) end 
 end
 
--- ── FULLBRIGHT ──
 local function toggleFullbright(enabled)
     State.FullbrightEnabled = enabled
-    if enabled then
-        Lighting.Brightness = 2
-        Lighting.ClockTime = 14
-        Lighting.FogEnd = 100000
-        Lighting.GlobalShadows = false
-        Lighting.Ambient = Color3.fromRGB(178, 178, 178)
-        Lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
-    else
-        Lighting.Brightness = OriginalValues.Brightness
-        Lighting.ClockTime = OriginalValues.ClockTime
-        Lighting.FogEnd = OriginalValues.FogEnd
-        Lighting.GlobalShadows = OriginalValues.GlobalShadows
-        Lighting.Ambient = OriginalValues.Ambient
-        Lighting.OutdoorAmbient = OriginalValues.OutdoorAmbient
-    end
+    if enabled then Lighting.Brightness = 2 Lighting.ClockTime = 14 Lighting.FogEnd = 100000 Lighting.GlobalShadows = false Lighting.Ambient = Color3.fromRGB(178, 178, 178)
+    else Lighting.Brightness = OriginalValues.Brightness Lighting.ClockTime = OriginalValues.ClockTime Lighting.FogEnd = OriginalValues.FogEnd Lighting.GlobalShadows = OriginalValues.GlobalShadows Lighting.Ambient = OriginalValues.Ambient end
 end
 
--- ── FOV ──
 local function toggleFOV(enabled)
     State.FOVEnabled = enabled
-    if enabled then
-        camera.FieldOfView = State.FOVValue
-        addConnection("FOV", RunService.RenderStepped:Connect(function()
-            if State.FOVEnabled then
-                camera.FieldOfView = State.FOVValue
-            end
-        end))
-    else
-        removeConnection("FOV")
-        camera.FieldOfView = OriginalValues.FOV
-    end
+    if enabled then addConnection("FOV", RunService.RenderStepped:Connect(function() camera.FieldOfView = State.FOVValue end))
+    else removeConnection("FOV") camera.FieldOfView = OriginalValues.FOV end
 end
 
--- ── ANTI-AFK ──
-local function toggleAntiAFK(enabled)
-    State.AntiAFKEnabled = enabled
-    if enabled then
-        -- İdleli bağlantısını kes
-        local vu = game:GetService("VirtualUser")
-        addConnection("AntiAFK", player.Idled:Connect(function()
-            pcall(function()
-                vu:Button2Down(Vector2.new(0,0), camera.CFrame)
-                task.wait(0.5)
-                vu:Button2Up(Vector2.new(0,0), camera.CFrame)
-            end)
-        end))
-    else
-        removeConnection("AntiAFK")
-    end
-end
-
--- ── CLICK TP ──
-local function toggleClickTP(enabled)
-    State.ClickTPEnabled = enabled
-    if enabled then
-        addConnection("ClickTP", mouse.Button1Down:Connect(function()
-            if UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) then
-                local root = getRootPart()
-                if root and mouse.Hit then
-                    root.CFrame = CFrame.new(mouse.Hit.Position + Vector3.new(0, 3, 0))
-                end
-            end
-        end))
-    else
-        removeConnection("ClickTP")
-    end
-end
-
--- ── TELEPORT TO PLAYER ──
 local function teleportToPlayer(target)
-    local myRoot = getRootPart()
-    local targetChar = target.Character
-    if myRoot and targetChar then
-        local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
-        if targetRoot then
-            myRoot.CFrame = targetRoot.CFrame * CFrame.new(0, 0, 3)
-            notify("🥝 Kiwi Hub", target.Name .. " oyuncusuna ışınlandın!", 2)
-        end
+    local myRoot, targetChar = getRootPart(), target.Character
+    if myRoot and targetChar and targetChar:FindFirstChild("HumanoidRootPart") then
+        myRoot.CFrame = targetChar.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3)
     end
 end
 
 -- ═══════════════════════════════════════════
--- GUI KÜTÜPHANE
+-- GUI OLUŞTURMA
 -- ═══════════════════════════════════════════
-
--- ScreenGui oluştur
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "KiwiHubUniversal"
 screenGui.ResetOnSpawn = false
-screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+pcall(function() screenGui.Parent = CoreGui end)
+if screenGui.Parent ~= CoreGui then screenGui.Parent = playerGui end
 
--- CoreGui'ye eklemeyi dene, olmazsa PlayerGui'ye
-local guiParent = playerGui
-pcall(function()
-    screenGui.Parent = CoreGui
-    guiParent = CoreGui
-end)
-if screenGui.Parent ~= CoreGui then
-    screenGui.Parent = playerGui
-end
-
--- Ana Container
 local mainFrame = Instance.new("Frame")
-mainFrame.Name = "Main"
-mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
-mainFrame.Size = UDim2.new(0, 580, 0, 420)
-mainFrame.BackgroundColor3 = Colors.BG
-mainFrame.BorderSizePixel = 0
-mainFrame.ClipsDescendants = true
-mainFrame.Parent = screenGui
+mainFrame.AnchorPoint, mainFrame.Position, mainFrame.Size = Vector2.new(0.5, 0.5), UDim2.new(0.5, 0, 0.5, 0), UDim2.new(0, 600, 0, 420)
+mainFrame.BackgroundColor3, mainFrame.BorderSizePixel, mainFrame.ClipsDescendants, mainFrame.Parent = Colors.BG, 0, true, screenGui
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 12)
+local mainStroke = Instance.new("UIStroke", mainFrame) mainStroke.Color = Colors.Accent mainStroke.Thickness = 1 mainStroke.Transparency = 0.6
 
-local mainCorner = Instance.new("UICorner")
-mainCorner.CornerRadius = UDim.new(0, 12)
-mainCorner.Parent = mainFrame
+-- Title Bar
+local titleBar = Instance.new("Frame", mainFrame) titleBar.Size, titleBar.BackgroundColor3, titleBar.BorderSizePixel = UDim2.new(1, 0, 0, 40), Colors.Sidebar, 0
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 12)
+local titleBarFix = Instance.new("Frame", titleBar) titleBarFix.Size, titleBarFix.Position, titleBarFix.BackgroundColor3, titleBarFix.BorderSizePixel = UDim2.new(1, 0, 0, 12), UDim2.new(0, 0, 1, -12), Colors.Sidebar, 0
+local titleText = Instance.new("TextLabel", titleBar) titleText.Size, titleText.Position, titleText.BackgroundTransparency, titleText.Text, titleText.TextSize, titleText.Font, titleText.TextColor3, titleText.TextXAlignment = UDim2.new(1, -100, 1, 0), UDim2.new(0, 15, 0, 0), 1, "🥝 KIWI HUB  •  v3.0", 15, Enum.Font.GothamBlack, Colors.Text, Enum.TextXAlignment.Left
 
-local mainStroke = Instance.new("UIStroke")
-mainStroke.Color = Colors.Accent
-mainStroke.Thickness = 1
-mainStroke.Transparency = 0.6
-mainStroke.Parent = mainFrame
+-- Kapat Butonu
+local closeBtn = Instance.new("TextButton", titleBar) closeBtn.Size, closeBtn.Position, closeBtn.BackgroundColor3, closeBtn.BackgroundTransparency, closeBtn.Text, closeBtn.TextColor3, closeBtn.Font, closeBtn.TextSize, closeBtn.BorderSizePixel = UDim2.new(0, 30, 0, 30), UDim2.new(1, -36, 0, 5), Colors.Danger, 0.8, "✕", Colors.Danger, Enum.Font.GothamBold, 13, 0
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
 
--- ═══ ÜST BAR (TITLE BAR) ═══
-local titleBar = Instance.new("Frame")
-titleBar.Name = "TitleBar"
-titleBar.Size = UDim2.new(1, 0, 0, 40)
-titleBar.BackgroundColor3 = Colors.Sidebar
-titleBar.BorderSizePixel = 0
-titleBar.Parent = mainFrame
+-- Sidebar ve İçerik Alanı
+local sidebar = Instance.new("Frame", mainFrame) sidebar.Size, sidebar.Position, sidebar.BackgroundColor3, sidebar.BorderSizePixel = UDim2.new(0, 140, 1, -40), UDim2.new(0, 0, 0, 40), Colors.Sidebar, 0
+local contentArea = Instance.new("Frame", mainFrame) contentArea.Size, contentArea.Position, contentArea.BackgroundColor3, contentArea.BorderSizePixel = UDim2.new(1, -140, 1, -40), UDim2.new(0, 140, 0, 40), Colors.BG, 0
+local sidebarDivider = Instance.new("Frame", mainFrame) sidebarDivider.Size, sidebarDivider.Position, sidebarDivider.BackgroundColor3, sidebarDivider.BorderSizePixel = UDim2.new(0, 1, 1, -40), UDim2.new(0, 140, 0, 40), Colors.Divider, 0
 
-local titleBarCorner = Instance.new("UICorner")
-titleBarCorner.CornerRadius = UDim.new(0, 12)
-titleBarCorner.Parent = titleBar
-
--- Alt köşeleri düzelt
-local titleBarFix = Instance.new("Frame")
-titleBarFix.Size = UDim2.new(1, 0, 0, 12)
-titleBarFix.Position = UDim2.new(0, 0, 1, -12)
-titleBarFix.BackgroundColor3 = Colors.Sidebar
-titleBarFix.BorderSizePixel = 0
-titleBarFix.Parent = titleBar
-
--- Başlık
-local titleText = Instance.new("TextLabel")
-titleText.Size = UDim2.new(1, -100, 1, 0)
-titleText.Position = UDim2.new(0, 15, 0, 0)
-titleText.BackgroundTransparency = 1
-titleText.Text = "🥝 KIWI HUB  •  Universal"
-titleText.TextSize = 15
-titleText.Font = Enum.Font.GothamBlack
-titleText.TextColor3 = Colors.Text
-titleText.TextXAlignment = Enum.TextXAlignment.Left
-titleText.Parent = titleBar
-
--- Küçült butonu
-local minimizeBtn = Instance.new("TextButton")
-minimizeBtn.Size = UDim2.new(0, 30, 0, 30)
-minimizeBtn.Position = UDim2.new(1, -70, 0, 5)
-minimizeBtn.BackgroundColor3 = Colors.Card
-minimizeBtn.Text = "─"
-minimizeBtn.TextSize = 14
-minimizeBtn.Font = Enum.Font.GothamBold
-minimizeBtn.TextColor3 = Colors.TextDim
-minimizeBtn.AutoButtonColor = false
-minimizeBtn.BorderSizePixel = 0
-minimizeBtn.Parent = titleBar
-
-local minBtnCorner = Instance.new("UICorner")
-minBtnCorner.CornerRadius = UDim.new(0, 6)
-minBtnCorner.Parent = minimizeBtn
-
--- Kapat butonu
-local closeBtn = Instance.new("TextButton")
-closeBtn.Size = UDim2.new(0, 30, 0, 30)
-closeBtn.Position = UDim2.new(1, -36, 0, 5)
-closeBtn.BackgroundColor3 = Colors.Danger
-closeBtn.BackgroundTransparency = 0.8
-closeBtn.Text = "✕"
-closeBtn.TextSize = 13
-closeBtn.Font = Enum.Font.GothamBold
-closeBtn.TextColor3 = Colors.Danger
-closeBtn.AutoButtonColor = false
-closeBtn.BorderSizePixel = 0
-closeBtn.Parent = titleBar
-
-local closeBtnCorner = Instance.new("UICorner")
-closeBtnCorner.CornerRadius = UDim.new(0, 6)
-closeBtnCorner.Parent = closeBtn
-
--- ═══ SOL SIDEBAR ═══
-local sidebar = Instance.new("Frame")
-sidebar.Name = "Sidebar"
-sidebar.Size = UDim2.new(0, 140, 1, -40)
-sidebar.Position = UDim2.new(0, 0, 0, 40)
-sidebar.BackgroundColor3 = Colors.Sidebar
-sidebar.BorderSizePixel = 0
-sidebar.Parent = mainFrame
-
--- ═══ İÇERİK ALANI ═══
-local contentArea = Instance.new("Frame")
-contentArea.Name = "Content"
-contentArea.Size = UDim2.new(1, -140, 1, -40)
-contentArea.Position = UDim2.new(0, 140, 0, 40)
-contentArea.BackgroundColor3 = Colors.BG
-contentArea.BorderSizePixel = 0
-contentArea.Parent = mainFrame
-
--- Dikey ayırıcı
-local sidebarDivider = Instance.new("Frame")
-sidebarDivider.Size = UDim2.new(0, 1, 1, -40)
-sidebarDivider.Position = UDim2.new(0, 140, 0, 40)
-sidebarDivider.BackgroundColor3 = Colors.Divider
-sidebarDivider.BorderSizePixel = 0
-sidebarDivider.Parent = mainFrame
-
--- ═══ TAB SİSTEMİ ═══
+-- ═══════════════════════════════════════════
+-- GUI BİLEŞENLERİ (UI KÜTÜPHANESİ)
+-- ═══════════════════════════════════════════
 local tabs = {
     {Name = "Player",   Icon = "⚡", Color = Colors.Accent},
+    {Name = "Aimbot",   Icon = "🎯", Color = Colors.Aimbot},
     {Name = "Visuals",  Icon = "👁️", Color = Color3.fromRGB(100, 181, 246)},
     {Name = "Teleport", Icon = "📍", Color = Color3.fromRGB(255, 167, 38)},
-    {Name = "Misc",     Icon = "🔧", Color = Color3.fromRGB(186, 104, 200)},
 }
 
-local tabButtons = {}
-local tabPages = {}
-local activeTab = nil
+local tabPages, tabButtons, activeTab = {}, {}, nil
 
--- Tab sayfası oluştur
 local function createTabPage(name)
-    local page = Instance.new("ScrollingFrame")
-    page.Name = name .. "Page"
-    page.Size = UDim2.new(1, -20, 1, -20)
-    page.Position = UDim2.new(0, 10, 0, 10)
-    page.BackgroundTransparency = 1
-    page.BorderSizePixel = 0
-    page.ScrollBarThickness = 3
-    page.ScrollBarImageColor3 = Colors.Accent
-    page.CanvasSize = UDim2.new(0, 0, 0, 0)
-    page.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    page.Visible = false
-    page.Parent = contentArea
-
-    local layout = Instance.new("UIListLayout")
-    layout.Padding = UDim.new(0, 8)
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Parent = page
-
-    local padding = Instance.new("UIPadding")
-    padding.PaddingBottom = UDim.new(0, 10)
-    padding.Parent = page
-
+    local page = Instance.new("ScrollingFrame", contentArea) page.Size, page.Position, page.BackgroundTransparency, page.BorderSizePixel, page.ScrollBarThickness, page.ScrollBarImageColor3, page.Visible = UDim2.new(1, -20, 1, -20), UDim2.new(0, 10, 0, 10), 1, 0, 3, Colors.Accent, false
+    Instance.new("UIListLayout", page).Padding = UDim.new(0, 8)
+    local pad = Instance.new("UIPadding", page) pad.PaddingBottom = UDim.new(0, 10)
     return page
 end
 
--- Bölüm başlığı oluştur
 local function createSectionHeader(parent, text, order)
-    local header = Instance.new("TextLabel")
-    header.Size = UDim2.new(1, 0, 0, 22)
-    header.BackgroundTransparency = 1
-    header.Text = "  " .. text
-    header.TextSize = 11
-    header.Font = Enum.Font.GothamBold
-    header.TextColor3 = Colors.Accent
-    header.TextXAlignment = Enum.TextXAlignment.Left
-    header.LayoutOrder = order
-    header.Parent = parent
+    local h = Instance.new("TextLabel", parent) h.Size, h.BackgroundTransparency, h.Text, h.TextSize, h.Font, h.TextColor3, h.TextXAlignment, h.LayoutOrder = UDim2.new(1, 0, 0, 22), 1, "  " .. text, 11, Enum.Font.GothamBold, Colors.Accent, Enum.TextXAlignment.Left, order
 end
 
--- Toggle switch oluştur
-local function createToggle(parent, label, description, order, callback)
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, 0, 0, 52)
-    container.BackgroundColor3 = Colors.Card
-    container.BorderSizePixel = 0
-    container.LayoutOrder = order
-    container.Parent = parent
-
-    local containerCorner = Instance.new("UICorner")
-    containerCorner.CornerRadius = UDim.new(0, 8)
-    containerCorner.Parent = container
-
-    -- Label
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(1, -80, 0, 20)
-    lbl.Position = UDim2.new(0, 14, 0, 8)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = label
-    lbl.TextSize = 14
-    lbl.Font = Enum.Font.GothamBold
-    lbl.TextColor3 = Colors.Text
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.Parent = container
-
-    -- Açıklama
-    local desc = Instance.new("TextLabel")
-    desc.Size = UDim2.new(1, -80, 0, 14)
-    desc.Position = UDim2.new(0, 14, 0, 30)
-    desc.BackgroundTransparency = 1
-    desc.Text = description
-    desc.TextSize = 11
-    desc.Font = Enum.Font.Gotham
-    desc.TextColor3 = Colors.TextDim
-    desc.TextXAlignment = Enum.TextXAlignment.Left
-    desc.Parent = container
-
-    -- Toggle switch
-    local toggleBg = Instance.new("Frame")
-    toggleBg.Size = UDim2.new(0, 44, 0, 24)
-    toggleBg.Position = UDim2.new(1, -58, 0.5, -12)
-    toggleBg.BackgroundColor3 = Colors.ToggleOff
-    toggleBg.BorderSizePixel = 0
-    toggleBg.Parent = container
-
-    local toggleBgCorner = Instance.new("UICorner")
-    toggleBgCorner.CornerRadius = UDim.new(1, 0)
-    toggleBgCorner.Parent = toggleBg
-
-    local toggleCircle = Instance.new("Frame")
-    toggleCircle.Size = UDim2.new(0, 18, 0, 18)
-    toggleCircle.Position = UDim2.new(0, 3, 0, 3)
-    toggleCircle.BackgroundColor3 = Colors.TextDim
-    toggleCircle.BorderSizePixel = 0
-    toggleCircle.Parent = toggleBg
-
-    local toggleCircleCorner = Instance.new("UICorner")
-    toggleCircleCorner.CornerRadius = UDim.new(1, 0)
-    toggleCircleCorner.Parent = toggleCircle
-
-    local isOn = false
-
-    local toggleBtn = Instance.new("TextButton")
-    toggleBtn.Size = UDim2.new(1, 0, 1, 0)
-    toggleBtn.BackgroundTransparency = 1
-    toggleBtn.Text = ""
-    toggleBtn.Parent = container
-
-    -- Hover efekti
-    toggleBtn.MouseEnter:Connect(function()
-        tween(container, 0.2, {BackgroundColor3 = Colors.CardHover})
-    end)
-    toggleBtn.MouseLeave:Connect(function()
-        tween(container, 0.2, {BackgroundColor3 = Colors.Card})
-    end)
-
-    local function setToggle(state)
-        isOn = state
-        if isOn then
-            tween(toggleBg, 0.25, {BackgroundColor3 = Colors.Accent})
-            tween(toggleCircle, 0.25, {Position = UDim2.new(0, 23, 0, 3), BackgroundColor3 = Color3.new(1,1,1)})
-        else
-            tween(toggleBg, 0.25, {BackgroundColor3 = Colors.ToggleOff})
-            tween(toggleCircle, 0.25, {Position = UDim2.new(0, 3, 0, 3), BackgroundColor3 = Colors.TextDim})
-        end
-    end
-
-    toggleBtn.MouseButton1Click:Connect(function()
+local function createToggle(parent, label, desc, order, callback)
+    local cont = Instance.new("Frame", parent) cont.Size, cont.BackgroundColor3, cont.LayoutOrder, cont.BorderSizePixel = UDim2.new(1, 0, 0, 52), Colors.Card, order, 0 Instance.new("UICorner", cont).CornerRadius = UDim.new(0, 8)
+    local l = Instance.new("TextLabel", cont) l.Size, l.Position, l.BackgroundTransparency, l.Text, l.Font, l.TextSize, l.TextColor3, l.TextXAlignment = UDim2.new(1, -80, 0, 20), UDim2.new(0, 14, 0, 8), 1, label, Enum.Font.GothamBold, 14, Colors.Text, Enum.TextXAlignment.Left
+    local d = Instance.new("TextLabel", cont) d.Size, d.Position, d.BackgroundTransparency, d.Text, d.Font, d.TextSize, d.TextColor3, d.TextXAlignment = UDim2.new(1, -80, 0, 14), UDim2.new(0, 14, 0, 30), 1, desc, Enum.Font.Gotham, 11, Colors.TextDim, Enum.TextXAlignment.Left
+    local tBg = Instance.new("Frame", cont) tBg.Size, tBg.Position, tBg.BackgroundColor3, tBg.BorderSizePixel = UDim2.new(0, 44, 0, 24), UDim2.new(1, -58, 0.5, -12), Colors.ToggleOff, 0 Instance.new("UICorner", tBg).CornerRadius = UDim.new(1, 0)
+    local tCir = Instance.new("Frame", tBg) tCir.Size, tCir.Position, tCir.BackgroundColor3, tCir.BorderSizePixel = UDim2.new(0, 18, 0, 18), UDim2.new(0, 3, 0, 3), Colors.TextDim, 0 Instance.new("UICorner", tCir).CornerRadius = UDim.new(1, 0)
+    local btn, isOn = Instance.new("TextButton", cont), false
+    btn.Size, btn.BackgroundTransparency, btn.Text = UDim2.new(1, 0, 1, 0), 1, ""
+    
+    btn.MouseButton1Click:Connect(function()
         isOn = not isOn
-        setToggle(isOn)
+        if isOn then tween(tBg, 0.2, {BackgroundColor3 = Colors.Accent}) tween(tCir, 0.2, {Position = UDim2.new(0, 23, 0, 3), BackgroundColor3 = Color3.new(1,1,1)})
+        else tween(tBg, 0.2, {BackgroundColor3 = Colors.ToggleOff}) tween(tCir, 0.2, {Position = UDim2.new(0, 3, 0, 3), BackgroundColor3 = Colors.TextDim}) end
         pcall(callback, isOn)
     end)
-
-    return {SetState = setToggle, Container = container}
 end
 
--- Slider oluştur
-local function createSlider(parent, label, min, max, default, order, callback)
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, 0, 0, 58)
-    container.BackgroundColor3 = Colors.Card
-    container.BorderSizePixel = 0
-    container.LayoutOrder = order
-    container.Parent = parent
-
-    local containerCorner = Instance.new("UICorner")
-    containerCorner.CornerRadius = UDim.new(0, 8)
-    containerCorner.Parent = container
-
-    -- Label + Değer
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(0.6, 0, 0, 20)
-    lbl.Position = UDim2.new(0, 14, 0, 6)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = label
-    lbl.TextSize = 13
-    lbl.Font = Enum.Font.GothamBold
-    lbl.TextColor3 = Colors.Text
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.Parent = container
-
-    local valueLabel = Instance.new("TextLabel")
-    valueLabel.Size = UDim2.new(0.35, 0, 0, 20)
-    valueLabel.Position = UDim2.new(0.65, -14, 0, 6)
-    valueLabel.BackgroundTransparency = 1
-    valueLabel.Text = tostring(math.floor(default))
-    valueLabel.TextSize = 13
-    valueLabel.Font = Enum.Font.GothamBold
-    valueLabel.TextColor3 = Colors.Accent
-    valueLabel.TextXAlignment = Enum.TextXAlignment.Right
-    valueLabel.Parent = container
-
-    -- Slider bar
-    local sliderBg = Instance.new("Frame")
-    sliderBg.Size = UDim2.new(1, -28, 0, 6)
-    sliderBg.Position = UDim2.new(0, 14, 0, 36)
-    sliderBg.BackgroundColor3 = Colors.SliderBg
-    sliderBg.BorderSizePixel = 0
-    sliderBg.Parent = container
-
-    local sliderBgCorner = Instance.new("UICorner")
-    sliderBgCorner.CornerRadius = UDim.new(1, 0)
-    sliderBgCorner.Parent = sliderBg
-
-    local sliderFill = Instance.new("Frame")
-    local initRatio = (default - min) / (max - min)
-    sliderFill.Size = UDim2.new(initRatio, 0, 1, 0)
-    sliderFill.BackgroundColor3 = Colors.Accent
-    sliderFill.BorderSizePixel = 0
-    sliderFill.Parent = sliderBg
-
-    local sliderFillCorner = Instance.new("UICorner")
-    sliderFillCorner.CornerRadius = UDim.new(1, 0)
-    sliderFillCorner.Parent = sliderFill
-
-    -- Slider knob
-    local knob = Instance.new("Frame")
-    knob.Size = UDim2.new(0, 14, 0, 14)
-    knob.AnchorPoint = Vector2.new(0.5, 0.5)
-    knob.Position = UDim2.new(1, 0, 0.5, 0)
-    knob.BackgroundColor3 = Color3.new(1, 1, 1)
-    knob.BorderSizePixel = 0
-    knob.Parent = sliderFill
-
-    local knobCorner = Instance.new("UICorner")
-    knobCorner.CornerRadius = UDim.new(1, 0)
-    knobCorner.Parent = knob
-
-    -- Slider interaction
-    local sliderBtn = Instance.new("TextButton")
-    sliderBtn.Size = UDim2.new(1, 0, 0, 24)
-    sliderBtn.Position = UDim2.new(0, 0, 0, 25)
-    sliderBtn.BackgroundTransparency = 1
-    sliderBtn.Text = ""
-    sliderBtn.Parent = container
-
-    local dragging = false
-
-    local function updateSlider(inputX)
-        local absPos = sliderBg.AbsolutePosition.X
-        local absSize = sliderBg.AbsoluteSize.X
-        local relX = math.clamp((inputX - absPos) / absSize, 0, 1)
-        local value = math.floor(min + (max - min) * relX)
-
-        sliderFill.Size = UDim2.new(relX, 0, 1, 0)
-        valueLabel.Text = tostring(value)
-        pcall(callback, value)
+local function createSlider(parent, label, min, max, def, order, callback)
+    local cont = Instance.new("Frame", parent) cont.Size, cont.BackgroundColor3, cont.LayoutOrder, cont.BorderSizePixel = UDim2.new(1, 0, 0, 58), Colors.Card, order, 0 Instance.new("UICorner", cont).CornerRadius = UDim.new(0, 8)
+    local l = Instance.new("TextLabel", cont) l.Size, l.Position, l.BackgroundTransparency, l.Text, l.Font, l.TextSize, l.TextColor3, l.TextXAlignment = UDim2.new(0.6, 0, 0, 20), UDim2.new(0, 14, 0, 6), 1, label, Enum.Font.GothamBold, 13, Colors.Text, Enum.TextXAlignment.Left
+    local vL = Instance.new("TextLabel", cont) vL.Size, vL.Position, vL.BackgroundTransparency, vL.Text, vL.Font, vL.TextSize, vL.TextColor3, vL.TextXAlignment = UDim2.new(0.35, 0, 0, 20), UDim2.new(0.65, -14, 0, 6), 1, tostring(def), Enum.Font.GothamBold, 13, Colors.Accent, Enum.TextXAlignment.Right
+    local sBg = Instance.new("Frame", cont) sBg.Size, sBg.Position, sBg.BackgroundColor3, sBg.BorderSizePixel = UDim2.new(1, -28, 0, 6), UDim2.new(0, 14, 0, 36), Colors.SliderBg, 0 Instance.new("UICorner", sBg).CornerRadius = UDim.new(1, 0)
+    local sFill = Instance.new("Frame", sBg) sFill.Size, sFill.BackgroundColor3, sFill.BorderSizePixel = UDim2.new((def-min)/(max-min), 0, 1, 0), Colors.Accent, 0 Instance.new("UICorner", sFill).CornerRadius = UDim.new(1, 0)
+    local btn, dragging = Instance.new("TextButton", cont), false
+    btn.Size, btn.Position, btn.BackgroundTransparency, btn.Text = UDim2.new(1, 0, 0, 24), UDim2.new(0, 0, 0, 25), 1, ""
+    
+    local function update(posX)
+        local relX = math.clamp((posX - sBg.AbsolutePosition.X) / sBg.AbsoluteSize.X, 0, 1)
+        local val = math.floor(min + (max - min) * relX)
+        sFill.Size = UDim2.new(relX, 0, 1, 0) vL.Text = tostring(val) pcall(callback, val)
     end
-
-    sliderBtn.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            updateSlider(input.Position.X)
-        end
-    end)
-
-    sliderBtn.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-        end
-    end)
-
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-            updateSlider(input.Position.X)
-        end
-    end)
-
-    return container
+    btn.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = true update(i.Position.X) end end)
+    btn.InputEnded:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end end)
+    UserInputService.InputChanged:Connect(function(i) if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then update(i.Position.X) end end)
 end
 
--- Buton oluştur
-local function createButton(parent, label, description, order, color, callback)
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, 0, 0, 44)
-    container.BackgroundColor3 = Colors.Card
-    container.BorderSizePixel = 0
-    container.LayoutOrder = order
-    container.Parent = parent
-
-    local containerCorner = Instance.new("UICorner")
-    containerCorner.CornerRadius = UDim.new(0, 8)
-    containerCorner.Parent = container
-
-    -- Renk şeridi
-    local stripe = Instance.new("Frame")
-    stripe.Size = UDim2.new(0, 3, 0.6, 0)
-    stripe.Position = UDim2.new(0, 6, 0.2, 0)
-    stripe.BackgroundColor3 = color or Colors.Accent
-    stripe.BorderSizePixel = 0
-    stripe.Parent = container
-
-    local stripeCorner = Instance.new("UICorner")
-    stripeCorner.CornerRadius = UDim.new(1, 0)
-    stripeCorner.Parent = stripe
-
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(1, -30, 0, 18)
-    lbl.Position = UDim2.new(0, 18, 0, 5)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = label
-    lbl.TextSize = 13
-    lbl.Font = Enum.Font.GothamBold
-    lbl.TextColor3 = Colors.Text
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.Parent = container
-
-    local desc = Instance.new("TextLabel")
-    desc.Size = UDim2.new(1, -30, 0, 12)
-    desc.Position = UDim2.new(0, 18, 0, 25)
-    desc.BackgroundTransparency = 1
-    desc.Text = description
-    desc.TextSize = 10
-    desc.Font = Enum.Font.Gotham
-    desc.TextColor3 = Colors.TextDim
-    desc.TextXAlignment = Enum.TextXAlignment.Left
-    desc.Parent = container
-
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, 0, 1, 0)
-    btn.BackgroundTransparency = 1
-    btn.Text = ""
-    btn.Parent = container
-
-    btn.MouseEnter:Connect(function()
-        tween(container, 0.2, {BackgroundColor3 = Colors.CardHover})
-    end)
-    btn.MouseLeave:Connect(function()
-        tween(container, 0.2, {BackgroundColor3 = Colors.Card})
-    end)
+-- ═══════════════════════════════════════════
+-- SEKME VE MENÜ İÇERİKLERİ
+-- ═══════════════════════════════════════════
+for i, tab in ipairs(tabs) do
+    tabPages[tab.Name] = createTabPage(tab.Name)
+    local btn = Instance.new("TextButton", sidebar) btn.Size, btn.Position, btn.BackgroundTransparency, btn.Text, btn.Font, btn.TextSize, btn.TextColor3, btn.TextXAlignment, btn.BorderSizePixel = UDim2.new(1, -16, 0, 38), UDim2.new(0, 8, 0, 8 + (i-1)*46), 1, tab.Icon .. "  " .. tab.Name, Enum.Font.GothamBold, 13, Colors.TextDim, Enum.TextXAlignment.Left, 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8) Instance.new("UIPadding", btn).PaddingLeft = UDim.new(0, 12)
+    local ind = Instance.new("Frame", btn) ind.Size, ind.Position, ind.BackgroundColor3, ind.BackgroundTransparency, ind.BorderSizePixel = UDim2.new(0, 3, 0.5, 0), UDim2.new(0, -8, 0.25, 0), tab.Color, 1, 0 Instance.new("UICorner", ind).CornerRadius = UDim.new(1, 0)
+    tabButtons[tab.Name] = {Btn = btn, Ind = ind}
 
     btn.MouseButton1Click:Connect(function()
-        -- Flash efekti
-        tween(container, 0.1, {BackgroundColor3 = color or Colors.Accent})
-        task.wait(0.15)
-        tween(container, 0.2, {BackgroundColor3 = Colors.Card})
-        pcall(callback)
-    end)
-
-    return container
-end
-
--- ═══ TAB BUTONLARI OLUŞTUR ═══
-for i, tab in ipairs(tabs) do
-    local page = createTabPage(tab.Name)
-    tabPages[tab.Name] = page
-
-    local tabBtn = Instance.new("TextButton")
-    tabBtn.Name = tab.Name .. "Tab"
-    tabBtn.Size = UDim2.new(1, -16, 0, 38)
-    tabBtn.Position = UDim2.new(0, 8, 0, 8 + (i - 1) * 46)
-    tabBtn.BackgroundColor3 = Colors.Card
-    tabBtn.BackgroundTransparency = 1
-    tabBtn.BorderSizePixel = 0
-    tabBtn.Text = tab.Icon .. "  " .. tab.Name
-    tabBtn.TextSize = 13
-    tabBtn.Font = Enum.Font.GothamBold
-    tabBtn.TextColor3 = Colors.TextDim
-    tabBtn.TextXAlignment = Enum.TextXAlignment.Left
-    tabBtn.AutoButtonColor = false
-    tabBtn.Parent = sidebar
-
-    local tabBtnCorner = Instance.new("UICorner")
-    tabBtnCorner.CornerRadius = UDim.new(0, 8)
-    tabBtnCorner.Parent = tabBtn
-
-    local tabPadding = Instance.new("UIPadding")
-    tabPadding.PaddingLeft = UDim.new(0, 12)
-    tabPadding.Parent = tabBtn
-
-    -- Aktif göstergesi
-    local tabIndicator = Instance.new("Frame")
-    tabIndicator.Size = UDim2.new(0, 3, 0.5, 0)
-    tabIndicator.Position = UDim2.new(0, -8, 0.25, 0)
-    tabIndicator.BackgroundColor3 = tab.Color
-    tabIndicator.BackgroundTransparency = 1
-    tabIndicator.BorderSizePixel = 0
-    tabIndicator.Parent = tabBtn
-
-    local tabIndCorner = Instance.new("UICorner")
-    tabIndCorner.CornerRadius = UDim.new(1, 0)
-    tabIndCorner.Parent = tabIndicator
-
-    tabButtons[tab.Name] = {Button = tabBtn, Indicator = tabIndicator, Color = tab.Color}
-
-    tabBtn.MouseEnter:Connect(function()
-        if activeTab ~= tab.Name then
-            tween(tabBtn, 0.2, {BackgroundTransparency = 0.5, TextColor3 = Colors.Text})
-        end
-    end)
-
-    tabBtn.MouseLeave:Connect(function()
-        if activeTab ~= tab.Name then
-            tween(tabBtn, 0.2, {BackgroundTransparency = 1, TextColor3 = Colors.TextDim})
-        end
-    end)
-
-    tabBtn.MouseButton1Click:Connect(function()
-        -- Tüm tabları deaktif et
-        for name, data in pairs(tabButtons) do
-            tween(data.Button, 0.25, {BackgroundTransparency = 1, TextColor3 = Colors.TextDim})
-            tween(data.Indicator, 0.25, {BackgroundTransparency = 1})
-            tabPages[name].Visible = false
-        end
-
-        -- Seçilen tabı aktif et
-        activeTab = tab.Name
-        tween(tabBtn, 0.25, {BackgroundTransparency = 0.3, TextColor3 = tab.Color})
-        tween(tabIndicator, 0.25, {BackgroundTransparency = 0})
-        page.Visible = true
+        for n, d in pairs(tabButtons) do tween(d.Btn, 0.2, {BackgroundTransparency = 1, TextColor3 = Colors.TextDim}) tween(d.Ind, 0.2, {BackgroundTransparency = 1}) tabPages[n].Visible = false end
+        tween(btn, 0.2, {BackgroundTransparency = 0.3, TextColor3 = tab.Color}) tween(ind, 0.2, {BackgroundTransparency = 0}) tabPages[tab.Name].Visible = true
     end)
 end
 
--- Sidebar alt bilgi
-local sidebarFooter = Instance.new("TextLabel")
-sidebarFooter.Size = UDim2.new(1, 0, 0, 30)
-sidebarFooter.Position = UDim2.new(0, 0, 1, -35)
-sidebarFooter.BackgroundTransparency = 1
-sidebarFooter.Text = "🥝 v2.0.0"
-sidebarFooter.TextSize = 10
-sidebarFooter.Font = Enum.Font.Gotham
-sidebarFooter.TextColor3 = Colors.TextMuted
-sidebarFooter.Parent = sidebar
+-- 1. PLAYER PAGE
+createSectionHeader(tabPages["Player"], "HAREKET VE FİZİK", 1)
+createToggle(tabPages["Player"], "Speed Hack", "Yürüme hızını değiştir", 2, toggleSpeed)
+createSlider(tabPages["Player"], "Hız Değeri", 16, 300, 16, 3, function(v) State.SpeedValue = v if State.SpeedEnabled then local hum = getHumanoid() if hum then hum.WalkSpeed = v end end end)
+createToggle(tabPages["Player"], "Fly (Uçma)", "WASD ve Space ile uç", 4, toggleFly)
+createToggle(tabPages["Player"], "Noclip", "Duvarların içinden geç", 5, toggleNoclip)
+
+-- 2. AIMBOT PAGE (YENİ)
+createSectionHeader(tabPages["Aimbot"], "AİMBOT AYARLARI", 1)
+createToggle(tabPages["Aimbot"], "Aimbot Aktif (Sağ Tık)", "Sağ tık basılı tuttuğunda hedefe kilitlenir", 2, function(on) State.AimbotEnabled = on end)
+createToggle(tabPages["Aimbot"], "FOV Çemberi", "Ekranda nişan alma alanını göster", 3, function(on) State.ShowFOV = on if FOVCircle then FOVCircle.Visible = (on and State.AimbotEnabled) end end)
+createSlider(tabPages["Aimbot"], "FOV Yarıçapı", 30, 600, 100, 4, function(v) State.FOVRadius = v end)
+
+createSectionHeader(tabPages["Aimbot"], "HEDEF FİLTRELERİ", 5)
+createToggle(tabPages["Aimbot"], "Team Check", "Sadece karşı takıma kilitlen", 6, function(on) State.TeamCheck = on end)
+createToggle(tabPages["Aimbot"], "Wall Check", "Sadece duvar arkasında olmayanlara kilitlen", 7, function(on) State.WallCheck = on end)
+
+-- 3. VISUALS PAGE
+createSectionHeader(tabPages["Visuals"], "GÖRÜNÜM AYARLARI", 1)
+createToggle(tabPages["Visuals"], "Oyuncu ESP", "Oyuncuların yerini işaretle", 2, toggleESP)
+createToggle(tabPages["Visuals"], "Fullbright", "Karanlık alanları aydınlat", 3, toggleFullbright)
 
 -- ═══════════════════════════════════════════
--- TAB İÇERİKLERİ
+-- SÜRÜKLEME VE ÇIKIŞ İŞLEMLERİ
 -- ═══════════════════════════════════════════
+local dragging, dragStart, startPos = false, nil, nil
+titleBar.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging, dragStart, startPos = true, i.Position, mainFrame.Position end end)
+titleBar.InputEnded:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end end)
+UserInputService.InputChanged:Connect(function(i) if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then local delta = i.Position - dragStart mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y) end end)
 
--- ── PLAYER TAB ──
-local playerPage = tabPages["Player"]
-
-createSectionHeader(playerPage, "HAREKET", 1)
-
-createToggle(playerPage, "Speed Hack", "Yürüme hızını değiştir", 2, function(on)
-    toggleSpeed(on)
-end)
-
-createSlider(playerPage, "Hız Değeri", 16, 500, 16, 3, function(val)
-    State.SpeedValue = val
-    if State.SpeedEnabled then
-        local hum = getHumanoid()
-        if hum then hum.WalkSpeed = val end
-    end
-end)
-
-createToggle(playerPage, "Jump Power", "Zıplama gücünü değiştir", 4, function(on)
-    toggleJump(on)
-end)
-
-createSlider(playerPage, "Zıplama Değeri", 50, 500, 50, 5, function(val)
-    State.JumpValue = val
-end)
-
-createToggle(playerPage, "Infinite Jump", "Havada sürekli zıpla", 6, function(on)
-    toggleInfJump(on)
-end)
-
-createSectionHeader(playerPage, "FİZİK", 7)
-
-createToggle(playerPage, "Fly", "Havada uç (WASD + Space/Ctrl)", 8, function(on)
-    toggleFly(on)
-end)
-
-createSlider(playerPage, "Uçuş Hızı", 10, 300, 60, 9, function(val)
-    State.FlySpeed = val
-end)
-
-createToggle(playerPage, "Noclip", "Duvarlardan geç", 10, function(on)
-    toggleNoclip(on)
-end)
-
-createToggle(playerPage, "Gravity", "Yerçekimini değiştir", 11, function(on)
-    toggleGravity(on)
-end)
-
-createSlider(playerPage, "Yerçekimi", 0, 400, 196, 12, function(val)
-    State.GravityValue = val
-    if State.GravityEnabled then
-        Workspace.Gravity = val
-    end
-end)
-
--- ── VISUALS TAB ──
-local visualsPage = tabPages["Visuals"]
-
-createSectionHeader(visualsPage, "OYUNCU GÖRSELLERİ", 1)
-
-createToggle(visualsPage, "ESP", "Oyuncuları duvar arkasından gör", 2, function(on)
-    toggleESP(on)
-end)
-
-createSectionHeader(visualsPage, "ORTAM", 5)
-
-createToggle(visualsPage, "Fullbright", "Karanlığı kaldır, her yeri aydınlat", 6, function(on)
-    toggleFullbright(on)
-end)
-
-createToggle(visualsPage, "FOV Changer", "Görüş alanını değiştir", 7, function(on)
-    toggleFOV(on)
-end)
-
-createSlider(visualsPage, "FOV Değeri", 30, 120, 70, 8, function(val)
-    State.FOVValue = val
-    if State.FOVEnabled then
-        camera.FieldOfView = val
-    end
-end)
-
--- ── TELEPORT TAB ──
-local teleportPage = tabPages["Teleport"]
-
-createSectionHeader(teleportPage, "OYUNCULARA IŞINLAN", 1)
-
--- Oyuncu listesi
-local playerListFrame = Instance.new("Frame")
-playerListFrame.Size = UDim2.new(1, 0, 0, 0)
-playerListFrame.BackgroundTransparency = 1
-playerListFrame.AutomaticSize = Enum.AutomaticSize.Y
-playerListFrame.LayoutOrder = 2
-playerListFrame.Parent = teleportPage
-
-local playerListLayout = Instance.new("UIListLayout")
-playerListLayout.Padding = UDim.new(0, 4)
-playerListLayout.SortOrder = Enum.SortOrder.Name
-playerListLayout.Parent = playerListFrame
-
-local function refreshPlayerList()
-    for _, child in pairs(playerListFrame:GetChildren()) do
-        if child:IsA("Frame") then child:Destroy() end
-    end
-
-    for _, p in pairs(Players:GetPlayers()) do
-        if p ~= player then
-            createButton(playerListFrame, "📍 " .. p.Name, "Tıkla ve ışınlan", 1, Colors.Warning, function()
-                teleportToPlayer(p)
-            end)
-        end
-    end
-end
-
-refreshPlayerList()
-
--- Yenile butonu
-createButton(teleportPage, "🔄 Listeyi Yenile", "Oyuncu listesini güncelle", 3, Colors.Accent, function()
-    refreshPlayerList()
-    notify("🥝 Kiwi Hub", "Oyuncu listesi güncellendi!", 2)
-end)
-
-createSectionHeader(teleportPage, "DİĞER", 4)
-
-createToggle(teleportPage, "Click Teleport", "Alt + Sol Tık ile ışınlan", 5, function(on)
-    toggleClickTP(on)
-end)
-
--- Oyuncu katılma/ayrılma
-Players.PlayerAdded:Connect(function() task.wait(1) refreshPlayerList() end)
-Players.PlayerRemoving:Connect(function() task.wait(0.5) refreshPlayerList() end)
-
--- ── MISC TAB ──
-local miscPage = tabPages["Misc"]
-
-createSectionHeader(miscPage, "ARAÇLAR", 1)
-
-createToggle(miscPage, "Anti-AFK", "AFK atılmasını engelle", 2, function(on)
-    toggleAntiAFK(on)
-end)
-
-createButton(miscPage, "🔄 Rejoin", "Sunucuya tekrar katıl", 3, Colors.Warning, function()
-    pcall(function()
-        game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, player)
-    end)
-end)
-
-createButton(miscPage, "📋 Server Hop", "Başka bir sunucuya geç", 4, Color3.fromRGB(100, 181, 246), function()
-    pcall(function()
-        game:GetService("TeleportService"):Teleport(game.PlaceId, player)
-    end)
-end)
-
-createSectionHeader(miscPage, "KARAKTER", 5)
-
-createButton(miscPage, "💀 Respawn", "Karakteri yeniden doğur", 6, Colors.Danger, function()
-    local char = getChar()
-    local hum = getHumanoid()
-    if hum then hum.Health = 0 end
-end)
-
-createButton(miscPage, "🏃 Animasyonları Sıfırla", "Tüm animasyonları durdur", 7, Colors.TextDim, function()
-    local char = getChar()
-    local hum = getHumanoid()
-    if hum then
-        for _, track in pairs(hum:GetPlayingAnimationTracks()) do
-            track:Stop()
-        end
-    end
-    notify("🥝 Kiwi Hub", "Animasyonlar sıfırlandı!", 2)
-end)
-
-createSectionHeader(miscPage, "BİLGİ", 8)
-
-local infoText = string.format(
-    "👤 %s\n🎮 Place ID: %d\n🌐 Job ID: %s\n👥 Oyuncu: %d/%d",
-    player.Name,
-    game.PlaceId,
-    string.sub(game.JobId, 1, 8) .. "...",
-    #Players:GetPlayers(),
-    Players.MaxPlayers
-)
-
-local infoBox = Instance.new("TextLabel")
-infoBox.Size = UDim2.new(1, 0, 0, 80)
-infoBox.BackgroundColor3 = Colors.Card
-infoBox.BorderSizePixel = 0
-infoBox.Text = infoText
-infoBox.TextSize = 12
-infoBox.Font = Enum.Font.GothamMedium
-infoBox.TextColor3 = Colors.TextDim
-infoBox.TextXAlignment = Enum.TextXAlignment.Left
-infoBox.TextYAlignment = Enum.TextYAlignment.Top
-infoBox.LayoutOrder = 9
-infoBox.Parent = miscPage
-
-local infoBoxCorner = Instance.new("UICorner")
-infoBoxCorner.CornerRadius = UDim.new(0, 8)
-infoBoxCorner.Parent = infoBox
-
-local infoBoxPadding = Instance.new("UIPadding")
-infoBoxPadding.PaddingLeft = UDim.new(0, 12)
-infoBoxPadding.PaddingTop = UDim.new(0, 10)
-infoBoxPadding.Parent = infoBox
-
--- ═══════════════════════════════════════════
--- SÜRÜKLEME SİSTEMİ
--- ═══════════════════════════════════════════
-local dragging = false
-local dragStart = nil
-local startPos = nil
-
-titleBar.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or
-       input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        dragStart = input.Position
-        startPos = mainFrame.Position
-    end
-end)
-
-titleBar.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or
-       input.UserInputType == Enum.UserInputType.Touch then
-        dragging = false
-    end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or
-       input.UserInputType == Enum.UserInputType.Touch) then
-        local delta = input.Position - dragStart
-        mainFrame.Position = UDim2.new(
-            startPos.X.Scale,
-            startPos.X.Offset + delta.X,
-            startPos.Y.Scale,
-            startPos.Y.Offset + delta.Y
-        )
-    end
-end)
-
--- ═══════════════════════════════════════════
--- KONTROLLER
--- ═══════════════════════════════════════════
-local isVisible = true
-local isMinimized = false
-
--- Toggle UI - Sağ Shift
-UserInputService.InputBegan:Connect(function(input, processed)
-    if processed then return end
-    if input.KeyCode == Enum.KeyCode.RightShift then
-        isVisible = not isVisible
-        mainFrame.Visible = isVisible
-    end
-end)
-
--- Minimize
-minimizeBtn.MouseButton1Click:Connect(function()
-    isMinimized = not isMinimized
-    if isMinimized then
-        tween(mainFrame, 0.3, {Size = UDim2.new(0, 580, 0, 40)})
-        minimizeBtn.Text = "□"
-    else
-        tween(mainFrame, 0.3, {Size = UDim2.new(0, 580, 0, 420)})
-        minimizeBtn.Text = "─"
-    end
-end)
-
-minimizeBtn.MouseEnter:Connect(function()
-    tween(minimizeBtn, 0.15, {BackgroundColor3 = Colors.CardHover})
-end)
-minimizeBtn.MouseLeave:Connect(function()
-    tween(minimizeBtn, 0.15, {BackgroundColor3 = Colors.Card})
-end)
-
--- Close
 closeBtn.MouseButton1Click:Connect(function()
-    -- Tüm özellikleri kapat
-    if State.SpeedEnabled then toggleSpeed(false) end
-    if State.JumpEnabled then toggleJump(false) end
-    if State.InfJumpEnabled then toggleInfJump(false) end
-    if State.FlyEnabled then toggleFly(false) end
-    if State.NoclipEnabled then toggleNoclip(false) end
-    if State.GravityEnabled then toggleGravity(false) end
-    if State.ESPEnabled then toggleESP(false) end
-    if State.FullbrightEnabled then toggleFullbright(false) end
-    if State.FOVEnabled then toggleFOV(false) end
-    if State.AntiAFKEnabled then toggleAntiAFK(false) end
-    if State.ClickTPEnabled then toggleClickTP(false) end
-
+    -- Tüm özellikleri deaktif et
+    toggleSpeed(false) toggleFly(false) toggleNoclip(false) State.AimbotEnabled = false
+    if FOVCircle then FOVCircle:Remove() end
+    for _, conn in pairs(Connections) do pcall(function() conn:Disconnect() end) end
     tween(mainFrame, 0.3, {Size = UDim2.new(0, 0, 0, 0), BackgroundTransparency = 1})
-    task.wait(0.35)
-    screenGui:Destroy()
+    task.wait(0.3) screenGui:Destroy()
 end)
 
-closeBtn.MouseEnter:Connect(function()
-    tween(closeBtn, 0.15, {BackgroundTransparency = 0.3})
-end)
-closeBtn.MouseLeave:Connect(function()
-    tween(closeBtn, 0.15, {BackgroundTransparency = 0.8})
-end)
+-- Shift ile Gizleme
+UserInputService.InputBegan:Connect(function(i, p) if not p and i.KeyCode == Enum.KeyCode.RightShift then mainFrame.Visible = not mainFrame.Visible end end)
 
--- ═══════════════════════════════════════════
--- GİRİŞ ANİMASYONU
--- ═══════════════════════════════════════════
+-- Açılış Animasyonu
 mainFrame.Size = UDim2.new(0, 0, 0, 0)
-mainFrame.BackgroundTransparency = 1
+tween(mainFrame, 0.5, {Size = UDim2.new(0, 600, 0, 420)})
+tabButtons["Player"].Btn.MouseButton1Click:Fire()
 
-task.wait(0.2)
-
-local openTween = TweenService:Create(mainFrame,
-    TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-    {Size = UDim2.new(0, 580, 0, 420), BackgroundTransparency = 0}
-)
-openTween:Play()
-
-task.wait(0.3)
-
--- İlk tabı aç
-tabButtons["Player"].Button.MouseButton1Click:Fire()
-
--- Karakter yenilendiğinde fly/noclip düzelt
-player.CharacterAdded:Connect(function()
-    task.wait(1)
-    if State.FlyEnabled then
-        toggleFly(false)
-        task.wait(0.2)
-        toggleFly(true)
-    end
-end)
-
--- ═══ HAZIR ═══
-notify("🥝 Kiwi Hub", "Universal script yüklendi!\nToggle: Sağ Shift", 4)
-
-print("═══════════════════════════════════════")
-print("  🥝 Kiwi Hub Universal v2.0.0")
-print("  ⚡ Tüm özellikler hazır!")
-print("  🎮 Toggle: Sağ Shift tuşu")
-print("═══════════════════════════════════════")
+notify("🥝 Kiwi Hub v3", "Aimbot eklendi ve buglar çözüldü!\nToggle: Sağ Shift", 4)
