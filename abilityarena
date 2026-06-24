@@ -40,6 +40,8 @@ local State = {
     -- Player
     SpeedEnabled = false,
     SpeedValue = 16,
+    JumpEnabled = false,
+    JumpValue = 50,
     QBoostEnabled = false,
     QBoostSpeed = 30,
     AntiKnockbackEnabled = false,
@@ -200,6 +202,26 @@ local function toggleSpeed(on)
         removeConn("Speed")
         local hum = getHum()
         if hum then hum.WalkSpeed = 16 end
+    end
+end
+
+-- ═══════════════════════════════════════════
+-- ÖZELLİK: JUMP POWER
+-- ═══════════════════════════════════════════
+local function toggleJump(on)
+    State.JumpEnabled = on
+    if on then
+        addConn("Jump", RunService.Heartbeat:Connect(function()
+            local hum = getHum()
+            if hum then
+                hum.UseJumpPower = true
+                hum.JumpPower = State.JumpValue
+            end
+        end))
+    else
+        removeConn("Jump")
+        local hum = getHum()
+        if hum then hum.JumpPower = 50 end
     end
 end
 
@@ -1086,14 +1108,20 @@ createToggle(avPage, "🎈 Havada Tutma", "Y seviyesinde havada asılı tutar", 
 -- ── PLAYER ──
 local playerPage = tabPages["Player"]
 createHeader(playerPage, "HAREKET", 1)
+
 createToggle(playerPage, "Speed Hack", "Yürüme hızını değiştir", 2, function(on) toggleSpeed(on) end)
 createSlider(playerPage, "Hız Değeri", 16, 500, 16, 3, function(v) State.SpeedValue = v end)
-createHeader(playerPage, "Q BOOST", 4)
-createToggle(playerPage, "Q Boost", "Q'ya basılı tutunca hız artar", 5, function(on) toggleQBoost(on) end)
-createSlider(playerPage, "Boost Hızı", 20, 200, 30, 6, function(v) State.QBoostSpeed = v end)
-createHeader(playerPage, "KORUMA", 7)
-createToggle(playerPage, "Anti-Knockback", "Geri itilmeyi engelle", 8, function(on) toggleAntiKnockback(on) end)
-createToggle(playerPage, "Anti-Ragdoll", "Ragdoll olmayı engelle", 9, function(on) toggleAntiRagdoll(on) end)
+
+createToggle(playerPage, "Jump Power", "Zıplama gücünü değiştir", 4, function(on) toggleJump(on) end)
+createSlider(playerPage, "Zıplama Değeri", 50, 500, 50, 5, function(v) State.JumpValue = v end)
+
+createHeader(playerPage, "Q BOOST", 6)
+createToggle(playerPage, "Q Boost", "Q'ya basılı tutunca hız artar", 7, function(on) toggleQBoost(on) end)
+createSlider(playerPage, "Boost Hızı", 20, 200, 30, 8, function(v) State.QBoostSpeed = v end)
+
+createHeader(playerPage, "KORUMA", 9)
+createToggle(playerPage, "Anti-Knockback", "Geri itilmeyi engelle", 10, function(on) toggleAntiKnockback(on) end)
+createToggle(playerPage, "Anti-Ragdoll", "Ragdoll olmayı engelle", 11, function(on) toggleAntiRagdoll(on) end)
 
 -- ── VISUALS ──
 local visualsPage = tabPages["Visuals"]
@@ -1170,6 +1198,7 @@ clsBtn.MouseButton1Click:Connect(function()
     for _, fn in pairs({
         function() toggleHitbox(false) end,
         function() toggleSpeed(false) end,
+        function() toggleJump(false) end,
         function() toggleQBoost(false) end,
         function() toggleAntiKnockback(false) end,
         function() toggleAntiRagdoll(false) end,
@@ -1208,7 +1237,7 @@ tabBtns["Combat"].Btn.MouseButton1Click:Fire()
 notify("🥝 Kiwi Hub", "Ability Arena v3.1 yüklendi!\nToggle: Sağ Shift | Boost: Q basılı tut", 5)
 print("═══════════════════════════════════════")
 print("  🥝 Kiwi Hub - Ability Arena v3.1.0")
-print("  ⚔️ Hitbox | 🛡️ Anti-Void | ⚡ Speed+Q Boost")
+print("  ⚔️ Hitbox | 🛡️ Anti-Void | ⚡ Speed/Jump+Q Boost")
 print("  👁️ ESP | 🔒 Anti-KB/Ragdoll | 💡 Fullbright")
 print("  🎮 Toggle: Sağ Shift | Boost: Q basılı tut")
 print("═══════════════════════════════════════")
