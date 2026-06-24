@@ -51,6 +51,7 @@ local State = {
     NoclipEnabled = false,
     GravityEnabled = false,
     GravityValue = 196.2,
+    AntiFlingEnabled = false,
 
     -- Visuals
     ESPEnabled = false,
@@ -64,6 +65,11 @@ local State = {
     -- Misc
     AntiAFKEnabled = false,
     ClickTPEnabled = false,
+    
+    -- Fling
+    TouchFlingEnabled = false,
+    MultiFlingActive = false,
+    SelectedTargets = {},
 }
 
 -- Orijinal değerleri sakla
@@ -313,6 +319,31 @@ local function toggleGravity(enabled)
     end
 end
 
+-- ── ANTI-FLING ──
+local function toggleAntiFling(enabled)
+    State.AntiFlingEnabled = enabled
+    if enabled then
+        addConnection("AntiFling", RunService.Stepped:Connect(function()
+            local myChar = getChar()
+            if not myChar then return end
+
+            for _, p in pairs(Players:GetPlayers()) do
+                if p ~= player and p.Character then
+                    for _, part in pairs(p.Character:GetDescendants()) do
+                        if part:IsA("BasePart") then
+                            if part.Velocity.Magnitude > 60 or part.RotVelocity.Magnitude > 60 then
+                                part.CanCollide = false
+                            end
+                        end
+                    end
+                end
+            end
+        end))
+    else
+        removeConnection("AntiFling")
+    end
+end
+
 -- ── ESP ──
 local function createESPForPlayer(target)
     if target == player then return end
@@ -541,13 +572,235 @@ local function teleportToPlayer(target)
     end
 end
 
+-- ── TOUCH FLING ──
+local flingThread = nil
+local function toggleTouchFling(enabled)
+    State.TouchFlingEnabled = enabled
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    
+    if not ReplicatedStorage:FindFirstChild("juisdfj0i32i0eidsuf0iok") then
+        local detection = Instance.new("Decal")
+        detection.Name = "juisdfj0i32i0eidsuf0iok"
+        detection.Parent = ReplicatedStorage
+    end
+
+    if enabled then
+        flingThread = coroutine.create(function()
+            local lp = Players.LocalPlayer
+            local c, hrp, vel, movel = nil, nil, nil, 0.1
+            while State.TouchFlingEnabled do
+                RunService.Heartbeat:Wait()
+                c = lp.Character
+                hrp = c and c:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    vel = hrp.Velocity
+                    hrp.Velocity = vel * 10000 + Vector3.new(0, 10000, 0)
+                    RunService.RenderStepped:Wait()
+                    hrp.Velocity = vel
+                    RunService.Stepped:Wait()
+                    hrp.Velocity = vel + Vector3.new(0, movel, 0)
+                    movel = -movel
+                end
+            end
+        end)
+        coroutine.resume(flingThread)
+    end
+end
+
+-- ── MULTI-TARGET FLING (KILASIK) ──
+getgenv().OldPos = nil
+getgenv().FPDH = Workspace.FallenPartsDestroyHeight
+
+local function SkidFling(TargetPlayer)
+    local Character = player.Character
+    local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+    local RootPart = Humanoid and Humanoid.RootPart
+    local TCharacter = TargetPlayer.Character
+    if not TCharacter then return end
+    
+    local THumanoid
+    local TRootPart
+    local THead
+    local Accessory
+    local Handle
+    if TCharacter:FindFirstChildOfClass("Humanoid") then
+        THumanoid = TCharacter:FindFirstChildOfClass("Humanoid")
+    end
+    if THumanoid and THumanoid.RootPart then
+        TRootPart = THumanoid.RootPart
+    end
+    if TCharacter:FindFirstChild("Head") then
+        THead = TCharacter.Head
+    end
+    if TCharacter:FindFirstChildOfClass("Accessory") then
+        Accessory = TCharacter:FindFirstChildOfClass("Accessory")
+    end
+    if Accessory and Accessory:FindFirstChild("Handle") then
+        Handle = Accessory.Handle
+    end
+    if Character and Humanoid and RootPart then
+        if RootPart.Velocity.Magnitude < 50 then
+            getgenv().OldPos = RootPart.CFrame
+        end
+        
+        if THumanoid and THumanoid.Sit then
+            return notify("🥝 Kiwi Hub", TargetPlayer.Name .. " oturuyor, fırlatılamaz", 2)
+        end
+        
+        if THead then
+            Workspace.CurrentCamera.CameraSubject = THead
+        elseif Handle then
+            Workspace.CurrentCamera.CameraSubject = Handle
+        elseif THumanoid and TRootPart then
+            Workspace.CurrentCamera.CameraSubject = THumanoid
+        end
+        
+        if not TCharacter:FindFirstChildWhichIsA("BasePart") then
+            return
+        end
+        
+        local FPos = function(BasePart, Pos, Ang)
+            RootPart.CFrame = CFrame.new(BasePart.Position) * Pos * Ang
+            Character:SetPrimaryPartCFrame(CFrame.new(BasePart.Position) * Pos * Ang)
+            RootPart.Velocity = Vector3.new(9e7, 9e7 * 10, 9e7)
+            RootPart.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
+        end
+        
+        local SFBasePart = function(BasePart)
+            local TimeToWait = 2
+            local Time = tick()
+            local Angle = 0
+            repeat
+                if RootPart and THumanoid then
+                    if BasePart.Velocity.Magnitude < 50 then
+                        Angle = Angle + 100
+                        FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle),0 ,0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle),0 ,0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle),0 ,0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0))
+                        task.wait()
+                    else
+                        FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, -THumanoid.WalkSpeed), CFrame.Angles(0, 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                        task.wait()
+                        
+                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                        task.wait()
+                    end
+                end
+            until Time + TimeToWait < tick() or not State.MultiFlingActive
+        end
+        
+        pcall(function() Workspace.FallenPartsDestroyHeight = 0/0 end)
+        
+        local BV = Instance.new("BodyVelocity")
+        BV.Parent = RootPart
+        BV.Velocity = Vector3.new(0, 0, 0)
+        BV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+        
+        Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+        
+        if TRootPart then
+            SFBasePart(TRootPart)
+        elseif THead then
+            SFBasePart(THead)
+        elseif Handle then
+            SFBasePart(Handle)
+        else
+            return notify("🥝 Kiwi Hub", TargetPlayer.Name .. " için geçerli bir parça yok", 2)
+        end
+        
+        BV:Destroy()
+        Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
+        Workspace.CurrentCamera.CameraSubject = Humanoid
+        
+        -- Reset character position
+        if getgenv().OldPos then
+            repeat
+                RootPart.CFrame = getgenv().OldPos * CFrame.new(0, .5, 0)
+                Character:SetPrimaryPartCFrame(getgenv().OldPos * CFrame.new(0, .5, 0))
+                Humanoid:ChangeState("GettingUp")
+                for _, part in pairs(Character:GetChildren()) do
+                    if part:IsA("BasePart") then
+                        part.Velocity, part.RotVelocity = Vector3.new(), Vector3.new()
+                    end
+                end
+                task.wait()
+            until (RootPart.Position - getgenv().OldPos.p).Magnitude < 25
+            pcall(function() Workspace.FallenPartsDestroyHeight = getgenv().FPDH end)
+        end
+    else
+        return notify("🥝 Kiwi Hub", "Karakteriniz hazır değil", 2)
+    end
+end
+
+local function StartMultiFling()
+    if State.MultiFlingActive then return end
+    
+    local count = 0
+    for _ in pairs(State.SelectedTargets) do count = count + 1 end
+    
+    if count == 0 then
+        notify("🥝 Kiwi Hub", "Hiç hedef seçilmedi!", 2)
+        return
+    end
+    
+    State.MultiFlingActive = true
+    notify("🥝 Kiwi Hub", count .. " hedefi fırlatmaya başlanıyor!", 2)
+    
+    task.spawn(function()
+        while State.MultiFlingActive do
+            local validTargets = {}
+            for name, p in pairs(State.SelectedTargets) do
+                if p and p.Parent then
+                    validTargets[name] = p
+                else
+                    State.SelectedTargets[name] = nil
+                end
+            end
+            
+            for _, p in pairs(validTargets) do
+                if State.MultiFlingActive then
+                    SkidFling(p)
+                    task.wait(0.1)
+                else
+                    break
+                end
+            end
+            task.wait(0.5)
+        end
+    end)
+end
+
+local function StopMultiFling()
+    if not State.MultiFlingActive then return end
+    State.MultiFlingActive = false
+    notify("🥝 Kiwi Hub", "Çoklu fırlatma durduruldu", 2)
+end
+
 -- ═══════════════════════════════════════════
 -- GUI KÜTÜPHANE
 -- ═══════════════════════════════════════════
 
 -- Eğer aynı isimde GUI zaten varsa temizle
 pcall(function()
-    local existing = playerGui:FindFirstChild("KiwiHubUniversal")
+    local existing = StarterGui:FindFirstChild("KiwiHubUniversal")
     if existing then existing:Destroy() end
 end)
 pcall(function()
@@ -560,6 +813,8 @@ local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "KiwiHubUniversal"
 screenGui.ResetOnSpawn = false
 screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+local playerGui = player:WaitForChild("PlayerGui")
 
 -- CoreGui'ye eklemeyi dene, olmazsa PlayerGui'ye
 local guiParent = playerGui
@@ -691,6 +946,7 @@ local tabs = {
     {Name = "Visuals",  Icon = "👁️", Color = Color3.fromRGB(100, 181, 246)},
     {Name = "Teleport", Icon = "📍", Color = Color3.fromRGB(255, 167, 38)},
     {Name = "Misc",     Icon = "🔧", Color = Color3.fromRGB(186, 104, 200)},
+    {Name = "Fling",    Icon = "🌪️", Color = Color3.fromRGB(239, 83, 80)},
 }
 
 local tabButtons = {}
@@ -1160,6 +1416,12 @@ createSlider(playerPage, "Yerçekimi", 0, 400, 196, 12, function(val)
     end
 end)
 
+createSectionHeader(playerPage, "KORUMA", 13)
+
+createToggle(playerPage, "Anti-Fling", "Diğer oyuncuların seni fırlatmasını engeller", 14, function(on)
+    toggleAntiFling(on)
+end)
+
 -- ── VISUALS TAB ──
 local visualsPage = tabPages["Visuals"]
 
@@ -1232,10 +1494,6 @@ createToggle(teleportPage, "Click Teleport", "Alt + Sol Tık ile ışınlan", 5,
     toggleClickTP(on)
 end)
 
--- Oyuncu katılma/ayrılma
-Players.PlayerAdded:Connect(function() task.wait(1) refreshPlayerList() end)
-Players.PlayerRemoving:Connect(function() task.wait(0.5) refreshPlayerList() end)
-
 -- ── MISC TAB ──
 local miscPage = tabPages["Misc"]
 
@@ -1253,7 +1511,7 @@ end)
 
 createButton(miscPage, "📋 Server Hop", "Başka bir sunucuya geç", 4, Color3.fromRGB(100, 181, 246), function()
     pcall(function()
-        game:GetService("TeleportService"):Teleport(game.PlaceId, player)
+         game:GetService("TeleportService"):Teleport(game.PlaceId, player)
     end)
 end)
 
@@ -1308,6 +1566,99 @@ local infoBoxPadding = Instance.new("UIPadding")
 infoBoxPadding.PaddingLeft = UDim.new(0, 12)
 infoBoxPadding.PaddingTop = UDim.new(0, 10)
 infoBoxPadding.Parent = infoBox
+
+-- ── FLING TAB ──
+local flingPage = tabPages["Fling"]
+
+createSectionHeader(flingPage, "FLING KONTROLÜ", 1)
+
+createToggle(flingPage, "Touch Fling", "Değdiğin oyuncuları uzağa fırlat", 2, function(on)
+    toggleTouchFling(on)
+end)
+
+createSectionHeader(flingPage, "MULTI-TARGET FLING", 3)
+
+createButton(flingPage, "▶️ Başlat", "Seçili oyuncuları fırlatmaya başla", 4, Colors.Success, function()
+    StartMultiFling()
+end)
+
+createButton(flingPage, "⏹️ Durdur", "Fırlatma işlemini durdur", 5, Colors.Danger, function()
+    StopMultiFling()
+end)
+
+local FlingToggles = {}
+
+createButton(flingPage, "✅ Hepsini Seç", "Tüm oyuncuları hedef olarak işaretle", 6, Colors.TextDim, function()
+    for name, tgl in pairs(FlingToggles) do
+        tgl.SetState(true)
+        local p = Players:FindFirstChild(name)
+        if p then State.SelectedTargets[name] = p end
+    end
+end)
+
+createButton(flingPage, "❌ Hiçbirini Seçme", "Tüm hedef seçimlerini kaldır", 7, Colors.TextDim, function()
+    for name, tgl in pairs(FlingToggles) do
+        tgl.SetState(false)
+        State.SelectedTargets[name] = nil
+    end
+end)
+
+createSectionHeader(flingPage, "HEDEF OYUNCULAR", 8)
+
+local flingPlayerListFrame = Instance.new("Frame")
+flingPlayerListFrame.Size = UDim2.new(1, 0, 0, 0)
+flingPlayerListFrame.BackgroundTransparency = 1
+flingPlayerListFrame.AutomaticSize = Enum.AutomaticSize.Y
+flingPlayerListFrame.LayoutOrder = 9
+flingPlayerListFrame.Parent = flingPage
+
+local flingPlayerListLayout = Instance.new("UIListLayout")
+flingPlayerListLayout.Padding = UDim.new(0, 4)
+flingPlayerListLayout.SortOrder = Enum.SortOrder.Name
+flingPlayerListLayout.Parent = flingPlayerListFrame
+
+local function refreshFlingPlayerList()
+    for _, child in pairs(flingPlayerListFrame:GetChildren()) do
+         if child:IsA("Frame") then child:Destroy() end
+    end
+    FlingToggles = {}
+
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= player then
+            local tgl = createToggle(flingPlayerListFrame, "🎯 " .. p.Name, "Fırlatılacak hedeflere ekle", 1, function(on)
+                if on then
+                    State.SelectedTargets[p.Name] = p
+                else
+                    State.SelectedTargets[p.Name] = nil
+                end
+            end)
+            
+            if State.SelectedTargets[p.Name] then
+                tgl.SetState(true)
+            end
+            
+            FlingToggles[p.Name] = tgl
+        end
+    end
+end
+
+refreshFlingPlayerList()
+
+-- Oyuncu katılma/ayrılma (Teleport ve Fling listesini güncelle)
+Players.PlayerAdded:Connect(function() 
+    task.wait(1) 
+    refreshPlayerList() 
+    refreshFlingPlayerList() 
+end)
+Players.PlayerRemoving:Connect(function(p) 
+    task.wait(0.5) 
+    refreshPlayerList() 
+    
+    if State.SelectedTargets[p.Name] then
+        State.SelectedTargets[p.Name] = nil
+    end
+    refreshFlingPlayerList() 
+end)
 
 -- ═══════════════════════════════════════════
 -- SÜRÜKLEME SİSTEMİ
@@ -1366,9 +1717,11 @@ minimizeBtn.MouseButton1Click:Connect(function()
     if isMinimized then
         tween(mainFrame, 0.3, {Size = UDim2.new(0, 580, 0, 40)})
         minimizeBtn.Text = "□"
+        sidebarFooter.Visible = false
     else
         tween(mainFrame, 0.3, {Size = UDim2.new(0, 580, 0, 420)})
         minimizeBtn.Text = "─"
+        sidebarFooter.Visible = true
     end
 end)
 
@@ -1393,6 +1746,9 @@ closeBtn.MouseButton1Click:Connect(function()
     if State.FOVEnabled then toggleFOV(false) end
     if State.AntiAFKEnabled then toggleAntiAFK(false) end
     if State.ClickTPEnabled then toggleClickTP(false) end
+    if State.TouchFlingEnabled then toggleTouchFling(false) end
+    if State.MultiFlingActive then StopMultiFling() end
+    if State.AntiFlingEnabled then toggleAntiFling(false) end
 
     tween(mainFrame, 0.3, {Size = UDim2.new(0, 0, 0, 0), BackgroundTransparency = 1})
     task.wait(0.35)
@@ -1439,5 +1795,6 @@ notify("🥝 Kiwi Hub", "Universal script yüklendi!\nToggle: Sağ Shift", 4)
 print("═══════════════════════════════════════")
 print("  🥝 Kiwi Hub Universal v2.0.0")
 print("  ⚡ Tüm özellikler hazır!")
+print("  🛡️ Anti-Fling Sistemi Aktif!")
 print("  🎮 Toggle: Sağ Shift tuşu")
 print("═══════════════════════════════════════")
