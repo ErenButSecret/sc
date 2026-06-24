@@ -40,6 +40,10 @@ local State = {
     -- Player
     SpeedEnabled = false,
     SpeedValue = 16,
+    QBoostEnabled = false,
+    QBoostSpeed = 30,
+    AntiKnockbackEnabled = false,
+    AntiRagdollEnabled = false,
 
     -- Anti-Void
     AV_TeleportEnabled = false,
@@ -51,6 +55,11 @@ local State = {
 
     -- Visuals
     FullbrightEnabled = false,
+    ESPEnabled = false,
+    ESP_ShowHealth = true,
+    ESP_ShowDistance = true,
+    ESP_FillTransparency = 0.7,
+    ESP_TeamCheck = false,
 }
 
 local OriginalLighting = {
@@ -64,11 +73,15 @@ local OriginalLighting = {
 
 local Connections = {}
 local HitboxCache = {}
+local ESPObjects = {}
 
 -- Anti-Void için saklanan objeler
 local AV_LastSafePos = nil
 local AV_Platform = nil
 local AV_BodyPos = nil
+
+-- Q Boost için
+local QHeld = false
 
 -- ═══════════════════════════════════════════
 -- RENK PALETİ
@@ -84,6 +97,7 @@ local C = {
     TextMuted = Color3.fromRGB(80, 80, 100),
     Danger = Color3.fromRGB(239, 83, 80),
     Warning = Color3.fromRGB(255, 193, 7),
+    Success = Color3.fromRGB(102, 187, 106),
     Combat = Color3.fromRGB(239, 83, 80),
     ToggleOff = Color3.fromRGB(50, 50, 65),
     SliderBg = Color3.fromRGB(35, 35, 50),
@@ -134,7 +148,7 @@ local function hitboxUpdate()
             if b and b:IsA("BasePart") then
                 if not HitboxCache[p] then HitboxCache[p] = b.Size end
                 b.Size = hbSize
-                b.Transparency = 0.1
+                b.Transparency = 1
                 b.Color = Color3.fromRGB(255, 0, 0)
                 b.CanCollide = false
             end
@@ -173,7 +187,14 @@ local function toggleSpeed(on)
     if on then
         addConn("Speed", RunService.Heartbeat:Connect(function()
             local hum = getHum()
-            if hum then hum.WalkSpeed = State.SpeedValue end
+            if hum then
+                -- Q Boost aktifse ve Q basılıysa boost hızını kullan
+                if State.QBoostEnabled and QHeld then
+                    hum.WalkSpeed = State.QBoostSpeed
+                else
+                    hum.WalkSpeed = State.SpeedValue
+                end
+            end
         end))
     else
         removeConn("Speed")
@@ -183,31 +204,360 @@ local function toggleSpeed(on)
 end
 
 -- ═══════════════════════════════════════════
--- ÖZELLİK: ANTI-VOID - 5 FARKLI YÖNTEM
+-- ÖZELLİK: Q BOOST
+-- ═══════════════════════════════════════════
+local function toggleQBoost(on)
+    State.QBoostEnabled = on
+    if on then
+        addConn("QBoost_Down", UserInputService.InputBegan:Connect(function(input, processed)
+            if processed then return end
+            if input.KeyCode == Enum.KeyCode.Q then
+                QHeld = true
+                -- Speed hack kapalıysa bile Q Boost çalışsın
+                if not State.SpeedEnabled then
+                    addConn("QBoost_Loop", RunService.Heartbeat:Connect(function()
+                        if QHeld and State.QBoostEnabled then
+                            local hum = getHum()
+                            if hum then hum.WalkSpeed = State.QBoostSpeed end
+                        end
+                    end))
+                end
+            end
+        end))
+        addConn("QBoost_Up", UserInputService.InputEnded:Connect(function(input)
+            if input.KeyCode == Enum.KeyCode.Q then
+                QHeld = false
+                removeConn("QBoost_Loop")
+                -- Speed hack açıksa o hıza dön, kapalıysa normal hıza dön
+                local hum = getHum()
+                if hum then
+                    if State.SpeedEnabled then
+                        hum.WalkSpeed = State.SpeedValue
+                    else
+                        hum.WalkSpeed = 16
+                    end
+                end
+            end
+        end))
+    else
+        QHeld = false
+        removeConn("QBoost_Down")
+        removeConn("QBoost_Up")
+        removeConn("QBoost_Loop")
+        -- Normal hıza dön
+        local hum = getHum()
+        if hum then
+            if State.SpeedEnabled then
+                hum.WalkSpeed = State.SpeedValue
+            else
+                hum.WalkSpeed = 16
+            end
+        end
+    end
+end
+
+-- ═══════════════════════════════════════════
+-- ÖZELLİK: ANTI-KNOCKBACK
+-- ═══════════════════════════════════════════
+local function toggleAntiKnockback(on)
+    State.AntiKnockbackEnabled = on
+    if on then
+        addConn("AntiKB", RunService.Heartbeat:Connect(function()
+            local root = getRoot()
+            if root then
+                -- Velocity'yi sıfırla (sadece X ve Z, Y dokunma ki düşüş/zıplama bozulmasın)
+                pcall(function()
+                    local vel = root.AssemblyLinearVelocity
+                    -- Eğer X veya Z hızı çok yüksekse (knockback) sıfırla
+                    if math.abs(vel.X) > 50 or math.abs(vel.Z) > 50 then
+                        root.AssemblyLinearVelocity = Vector3.new(0, vel.Y, 0)
+                    end
+                end)
+
+                -- BodyVelocity, BodyForce gibi knockback kaynakları varsa kaldır
+                for _, child in pairs(root:GetChildren()) do
+                    if (child:IsA("BodyVelocity") or child:IsA("BodyForce") or child:IsA("VectorForce"))
+                        and not child.Name:find("Kiwi") then
+                        child:Destroy()
+                    end
+                end
+            end
+        end))
+    else
+        removeConn("AntiKB")
+    end
+end
+
+-- ═══════════════════════════════════════════
+-- ÖZELLİK: ANTI-RAGDOLL
+-- ═══════════════════════════════════════════
+local function toggleAntiRagdoll(on)
+    State.AntiRagdollEnabled = on
+    if on then
+        addConn("AntiRagdoll", RunService.Heartbeat:Connect(function()
+            local hum = getHum()
+            local char = getChar()
+            if not hum or not char then return end
+
+            -- Ragdoll ve düşme state'lerini engelle
+            pcall(function()
+                hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+                hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+            end)
+
+            -- Eğer ragdoll state'indeyse zorla çıkar
+            local currentState = hum:GetState()
+            if currentState == Enum.HumanoidStateType.Ragdoll
+                or currentState == Enum.HumanoidStateType.FallingDown then
+                hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+            end
+
+            -- Ragdoll için eklenen constraint'leri kaldır
+            for _, part in pairs(char:GetDescendants()) do
+                -- BallSocketConstraint (ragdoll eklemi)
+                if part:IsA("BallSocketConstraint") and part.Name:lower():find("ragdoll") then
+                    part:Destroy()
+                end
+                -- Ragdoll attribute kontrolü
+                if part:IsA("BasePart") then
+                    pcall(function()
+                        if part:GetAttribute("Ragdolled") then
+                            part:SetAttribute("Ragdolled", false)
+                        end
+                    end)
+                end
+            end
+
+            -- Humanoid PlatformStand kapalı tut (ragdoll bunu açar)
+            if hum.PlatformStand then
+                hum.PlatformStand = false
+            end
+
+            -- Tüm Motor6D'leri aktif tut
+            for _, motor in pairs(char:GetDescendants()) do
+                if motor:IsA("Motor6D") then
+                    motor.Enabled = true
+                end
+            end
+        end))
+    else
+        removeConn("AntiRagdoll")
+        -- State'leri geri aç
+        local hum = getHum()
+        if hum then
+            pcall(function()
+                hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
+                hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
+            end)
+        end
+    end
+end
+
+-- ═══════════════════════════════════════════
+-- ÖZELLİK: ESP
+-- ═══════════════════════════════════════════
+local function createESPForPlayer(target)
+    if target == player or ESPObjects[target.Name] then return end
+
+    -- Takım kontrolü
+    if State.ESP_TeamCheck and target.Team and player.Team and target.Team == player.Team then
+        return
+    end
+
+    local function setup()
+        local ch = target.Character
+        if not ch then return end
+        local head = ch:FindFirstChild("Head")
+        local hum = ch:FindFirstChildOfClass("Humanoid")
+        local root = ch:FindFirstChild("HumanoidRootPart")
+        if not head or not hum or not root then return end
+
+        -- Highlight
+        local hl = Instance.new("Highlight")
+        hl.Name = "KiwiESP"
+        hl.FillColor = C.Accent
+        hl.FillTransparency = State.ESP_FillTransparency
+        hl.OutlineColor = C.Accent
+        hl.OutlineTransparency = 0.3
+        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        hl.Adornee = ch
+        hl.Parent = ch
+
+        -- Billboard
+        local bb = Instance.new("BillboardGui")
+        bb.Name = "KiwiESP_BB"
+        bb.Adornee = head
+        bb.Size = UDim2.new(0, 200, 0, 50)
+        bb.StudsOffset = Vector3.new(0, 3, 0)
+        bb.AlwaysOnTop = true
+        bb.Parent = head
+
+        -- İsim
+        local nameL = Instance.new("TextLabel")
+        nameL.Size = UDim2.new(1, 0, 0, 18)
+        nameL.BackgroundTransparency = 1
+        nameL.Text = target.Name
+        nameL.TextSize = 14
+        nameL.Font = Enum.Font.GothamBold
+        nameL.TextColor3 = C.Accent
+        nameL.TextStrokeTransparency = 0.4
+        nameL.TextStrokeColor3 = Color3.new(0, 0, 0)
+        nameL.Parent = bb
+
+        -- Bilgi satırı (HP + Mesafe)
+        local infoL = Instance.new("TextLabel")
+        infoL.Name = "Info"
+        infoL.Size = UDim2.new(1, 0, 0, 14)
+        infoL.Position = UDim2.new(0, 0, 0, 18)
+        infoL.BackgroundTransparency = 1
+        infoL.TextSize = 12
+        infoL.Font = Enum.Font.GothamMedium
+        infoL.TextColor3 = C.Text
+        infoL.TextStrokeTransparency = 0.4
+        infoL.TextStrokeColor3 = Color3.new(0, 0, 0)
+        infoL.Parent = bb
+
+        -- HP Bar arka plan
+        local hpBarBg = Instance.new("Frame")
+        hpBarBg.Name = "HPBarBg"
+        hpBarBg.Size = UDim2.new(0.6, 0, 0, 4)
+        hpBarBg.Position = UDim2.new(0.2, 0, 0, 35)
+        hpBarBg.AnchorPoint = Vector2.new(0, 0)
+        hpBarBg.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+        hpBarBg.BorderSizePixel = 0
+        hpBarBg.Parent = bb
+        Instance.new("UICorner", hpBarBg).CornerRadius = UDim.new(1, 0)
+
+        -- HP Bar dolgu
+        local hpBarFill = Instance.new("Frame")
+        hpBarFill.Name = "Fill"
+        hpBarFill.Size = UDim2.new(1, 0, 1, 0)
+        hpBarFill.BackgroundColor3 = C.Success
+        hpBarFill.BorderSizePixel = 0
+        hpBarFill.Parent = hpBarBg
+        Instance.new("UICorner", hpBarFill).CornerRadius = UDim.new(1, 0)
+
+        ESPObjects[target.Name] = {HL = hl, BB = bb, Info = infoL, HPBg = hpBarBg, HPFill = hpBarFill}
+
+        -- Güncelleme döngüsü
+        local uc
+        uc = RunService.Heartbeat:Connect(function()
+            if not State.ESPEnabled or not ch.Parent or not hum.Parent then
+                uc:Disconnect()
+                return
+            end
+
+            -- Bilgi metni
+            local parts = {}
+            if State.ESP_ShowHealth then
+                parts[#parts + 1] = string.format("HP: %d/%d", math.floor(hum.Health), math.floor(hum.MaxHealth))
+            end
+            local myRoot = getRoot()
+            if State.ESP_ShowDistance and myRoot and root and root.Parent then
+                parts[#parts + 1] = math.floor((myRoot.Position - root.Position).Magnitude) .. "m"
+            end
+            infoL.Text = table.concat(parts, " | ")
+
+            -- HP bar güncelle
+            local hpRatio = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+            hpBarFill.Size = UDim2.new(hpRatio, 0, 1, 0)
+
+            -- HP rengine göre renk değiştir
+            if hpRatio > 0.6 then
+                hpBarFill.BackgroundColor3 = C.Success
+                hl.OutlineColor = C.Accent
+            elseif hpRatio > 0.3 then
+                hpBarFill.BackgroundColor3 = C.Warning
+                hl.OutlineColor = C.Warning
+            else
+                hpBarFill.BackgroundColor3 = C.Danger
+                hl.OutlineColor = C.Danger
+            end
+
+            -- HP bar görünürlük
+            hpBarBg.Visible = State.ESP_ShowHealth
+
+            -- Fill transparency güncelle
+            hl.FillTransparency = State.ESP_FillTransparency
+        end)
+        addConn("ESP_U_" .. target.Name, uc)
+    end
+
+    setup()
+
+    -- Karakter yenilenince tekrar kur
+    addConn("ESP_CA_" .. target.Name, target.CharacterAdded:Connect(function()
+        task.wait(0.5)
+        if ESPObjects[target.Name] then
+            pcall(function() ESPObjects[target.Name].HL:Destroy() end)
+            pcall(function() ESPObjects[target.Name].BB:Destroy() end)
+            ESPObjects[target.Name] = nil
+        end
+        if State.ESPEnabled then setup() end
+    end))
+end
+
+local function removeESPForPlayer(name)
+    if ESPObjects[name] then
+        pcall(function() ESPObjects[name].HL:Destroy() end)
+        pcall(function() ESPObjects[name].BB:Destroy() end)
+        ESPObjects[name] = nil
+    end
+    removeConn("ESP_U_" .. name)
+    removeConn("ESP_CA_" .. name)
+end
+
+local function toggleESP(on)
+    State.ESPEnabled = on
+    if on then
+        for _, p in pairs(Players:GetPlayers()) do
+            createESPForPlayer(p)
+        end
+        addConn("ESP_PA", Players.PlayerAdded:Connect(function(p)
+            task.wait(1)
+            if State.ESPEnabled then createESPForPlayer(p) end
+        end))
+        addConn("ESP_PR", Players.PlayerRemoving:Connect(function(p)
+            removeESPForPlayer(p.Name)
+        end))
+    else
+        for name in pairs(ESPObjects) do
+            removeESPForPlayer(name)
+        end
+        removeConn("ESP_PA")
+        removeConn("ESP_PR")
+    end
+end
+
+-- ESP'yi yenile (config değiştiğinde)
+local function refreshESP()
+    if State.ESPEnabled then
+        toggleESP(false)
+        task.wait(0.1)
+        toggleESP(true)
+    end
+end
+
+-- ═══════════════════════════════════════════
+-- ÖZELLİK: ANTI-VOID (5 YÖNTEM)
 -- ═══════════════════════════════════════════
 
--- ── YÖNTEM 1: GERİ IŞINLAMA ──
--- Y seviyesine düşünce son güvenli konuma geri ışınlar
+-- Geri Işınlama
 local function toggleAV_Teleport(on)
     State.AV_TeleportEnabled = on
     if on then
         addConn("AV_Teleport", RunService.Heartbeat:Connect(function()
             local root = getRoot()
             if not root then return end
-
-            -- Güvenli pozisyonu sürekli kaydet (Y > eşik + 5 ise güvenli)
             if root.Position.Y > State.AV_Y + 5 then
                 AV_LastSafePos = root.CFrame
             end
-
-            -- Y eşiğine ulaştıysa geri ışınla
             if root.Position.Y <= State.AV_Y then
                 if AV_LastSafePos then
                     root.CFrame = AV_LastSafePos
                 else
                     root.CFrame = CFrame.new(root.Position.X, State.AV_Y + 20, root.Position.Z)
                 end
-                -- Hızı sıfırla
                 pcall(function() root.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end)
                 pcall(function() root.Velocity = Vector3.new(0, 0, 0) end)
             end
@@ -217,44 +567,32 @@ local function toggleAV_Teleport(on)
     end
 end
 
--- ── YÖNTEM 2: DONDURMA (FREEZE) ──
--- Y seviyesine düşünce karakteri olduğu yerde dondurur
+-- Dondurma
 local function toggleAV_Freeze(on)
     State.AV_FreezeEnabled = on
     if on then
         addConn("AV_Freeze", RunService.Heartbeat:Connect(function()
             local root = getRoot()
             if not root then return end
-
             if root.Position.Y <= State.AV_Y then
-                -- Karakteri dondur: anchor yap
                 root.Anchored = true
-                -- Y'yi eşik seviyesinde tut, X/Z aynı kalsın
                 root.CFrame = CFrame.new(root.Position.X, State.AV_Y, root.Position.Z) * (root.CFrame - root.CFrame.Position)
             else
-                -- Güvenli bölgede → anchor'ı kaldır
-                if root.Anchored then
-                    root.Anchored = false
-                end
+                if root.Anchored then root.Anchored = false end
             end
         end))
     else
         removeConn("AV_Freeze")
-        -- Anchor kaldığıysa temizle
         local root = getRoot()
         if root then root.Anchored = false end
     end
 end
 
--- ── YÖNTEM 3: PLATFORM (PART KOYMA) ──
--- Y seviyesinde görünmez bir platform oluşturur, düşmeyi engeller
+-- Platform
 local function toggleAV_Platform(on)
     State.AV_PlatformEnabled = on
     if on then
-        -- Mevcut platformu temizle
         if AV_Platform and AV_Platform.Parent then AV_Platform:Destroy() end
-
-        -- Platform oluştur
         local plat = Instance.new("Part")
         plat.Name = "KiwiAntiVoidPlatform"
         plat.Anchored = true
@@ -263,12 +601,9 @@ local function toggleAV_Platform(on)
         plat.Position = Vector3.new(0, State.AV_Y - 1, 0)
         plat.Transparency = 1
         plat.Material = Enum.Material.ForceField
-        plat.Color = Color3.fromRGB(124, 179, 66)
+        plat.Color = C.Accent
         plat.Parent = Workspace
-
         AV_Platform = plat
-
-        -- Platform'u oyuncunun altında takip ettir
         addConn("AV_Platform", RunService.Heartbeat:Connect(function()
             local root = getRoot()
             if root and plat and plat.Parent then
@@ -277,37 +612,23 @@ local function toggleAV_Platform(on)
         end))
     else
         removeConn("AV_Platform")
-        if AV_Platform and AV_Platform.Parent then
-            AV_Platform:Destroy()
-            AV_Platform = nil
-        end
+        if AV_Platform and AV_Platform.Parent then AV_Platform:Destroy(); AV_Platform = nil end
     end
 end
 
--- ── YÖNTEM 4: ZIPLATMA (BOUNCE) ──
--- Y seviyesine yaklaşınca yukarı doğru zıplatır
+-- Zıplatma
 local function toggleAV_Bounce(on)
     State.AV_BounceEnabled = on
     if on then
         addConn("AV_Bounce", RunService.Heartbeat:Connect(function()
             local root = getRoot()
             if not root then return end
-
             if root.Position.Y <= State.AV_Y + 3 then
-                -- Yukarı doğru güçlü bir itme uygula
                 pcall(function()
-                    root.AssemblyLinearVelocity = Vector3.new(
-                        root.AssemblyLinearVelocity.X * 0.5,
-                        80,
-                        root.AssemblyLinearVelocity.Z * 0.5
-                    )
+                    root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X * 0.5, 80, root.AssemblyLinearVelocity.Z * 0.5)
                 end)
                 pcall(function()
-                    root.Velocity = Vector3.new(
-                        root.Velocity.X * 0.5,
-                        80,
-                        root.Velocity.Z * 0.5
-                    )
+                    root.Velocity = Vector3.new(root.Velocity.X * 0.5, 80, root.Velocity.Z * 0.5)
                 end)
             end
         end))
@@ -316,17 +637,14 @@ local function toggleAV_Bounce(on)
     end
 end
 
--- ── YÖNTEM 5: HAVADA TUTMA (FLOAT) ──
--- Y seviyesine düşünce BodyPosition ile havada tutar
+-- Havada Tutma
 local function toggleAV_Float(on)
     State.AV_FloatEnabled = on
     if on then
         addConn("AV_Float", RunService.Heartbeat:Connect(function()
             local root = getRoot()
             if not root then return end
-
             if root.Position.Y <= State.AV_Y + 2 then
-                -- BodyPosition yoksa oluştur
                 if not AV_BodyPos or not AV_BodyPos.Parent then
                     local bp = Instance.new("BodyPosition")
                     bp.Name = "KiwiAntiVoidFloat"
@@ -336,22 +654,14 @@ local function toggleAV_Float(on)
                     bp.Parent = root
                     AV_BodyPos = bp
                 end
-                -- Hedef pozisyonu: mevcut X/Z, Y = eşik seviyesi
                 AV_BodyPos.Position = Vector3.new(root.Position.X, State.AV_Y + 3, root.Position.Z)
             else
-                -- Güvenli bölgedeyse BodyPosition'ı kaldır
-                if AV_BodyPos and AV_BodyPos.Parent then
-                    AV_BodyPos:Destroy()
-                    AV_BodyPos = nil
-                end
+                if AV_BodyPos and AV_BodyPos.Parent then AV_BodyPos:Destroy(); AV_BodyPos = nil end
             end
         end))
     else
         removeConn("AV_Float")
-        if AV_BodyPos and AV_BodyPos.Parent then
-            AV_BodyPos:Destroy()
-            AV_BodyPos = nil
-        end
+        if AV_BodyPos and AV_BodyPos.Parent then AV_BodyPos:Destroy(); AV_BodyPos = nil end
     end
 end
 
@@ -380,7 +690,6 @@ end
 -- ═══════════════════════════════════════════
 -- GUI OLUŞTURMA
 -- ═══════════════════════════════════════════
-
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "KiwiHubAbility"
 screenGui.ResetOnSpawn = false
@@ -394,7 +703,7 @@ local mainFrame = Instance.new("Frame")
 mainFrame.Name = "Main"
 mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
 mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
-mainFrame.Size = UDim2.new(0, 560, 0, 420)
+mainFrame.Size = UDim2.new(0, 560, 0, 440)
 mainFrame.BackgroundColor3 = C.BG
 mainFrame.BorderSizePixel = 0
 mainFrame.ClipsDescendants = true
@@ -432,7 +741,6 @@ titleText.TextColor3 = C.Text
 titleText.TextXAlignment = Enum.TextXAlignment.Left
 titleText.Parent = titleBar
 
--- Minimize
 local minBtn = Instance.new("TextButton")
 minBtn.Size = UDim2.new(0, 30, 0, 30)
 minBtn.Position = UDim2.new(1, -70, 0, 5)
@@ -446,7 +754,6 @@ minBtn.BorderSizePixel = 0
 minBtn.Parent = titleBar
 Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0, 6)
 
--- Close
 local clsBtn = Instance.new("TextButton")
 clsBtn.Size = UDim2.new(0, 30, 0, 30)
 clsBtn.Position = UDim2.new(1, -36, 0, 5)
@@ -469,7 +776,6 @@ sidebar.BackgroundColor3 = C.Sidebar
 sidebar.BorderSizePixel = 0
 sidebar.Parent = mainFrame
 
--- Content
 local contentArea = Instance.new("Frame")
 contentArea.Size = UDim2.new(1, -140, 1, -40)
 contentArea.Position = UDim2.new(0, 140, 0, 40)
@@ -477,7 +783,6 @@ contentArea.BackgroundColor3 = C.BG
 contentArea.BorderSizePixel = 0
 contentArea.Parent = mainFrame
 
--- Divider
 local sdiv = Instance.new("Frame")
 sdiv.Size = UDim2.new(0, 1, 1, -40)
 sdiv.Position = UDim2.new(0, 140, 0, 40)
@@ -501,13 +806,10 @@ local function createPage(name)
     page.AutomaticCanvasSize = Enum.AutomaticSize.Y
     page.Visible = false
     page.Parent = contentArea
-
-    local layout = Instance.new("UIListLayout", page)
-    layout.Padding = UDim.new(0, 8)
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-
-    local pad = Instance.new("UIPadding", page)
-    pad.PaddingBottom = UDim.new(0, 10)
+    local lay = Instance.new("UIListLayout", page)
+    lay.Padding = UDim.new(0, 8)
+    lay.SortOrder = Enum.SortOrder.LayoutOrder
+    Instance.new("UIPadding", page).PaddingBottom = UDim.new(0, 10)
     return page
 end
 
@@ -745,12 +1047,11 @@ for i, tab in ipairs(tabDefs) do
     end)
 end
 
--- Footer
 local footer = Instance.new("TextLabel")
 footer.Size = UDim2.new(1, 0, 0, 30)
 footer.Position = UDim2.new(0, 0, 1, -35)
 footer.BackgroundTransparency = 1
-footer.Text = "🥝 v3.0.0"
+footer.Text = "🥝 v3.1.0"
 footer.TextSize = 10
 footer.Font = Enum.Font.Gotham
 footer.TextColor3 = C.TextMuted
@@ -760,65 +1061,59 @@ footer.Parent = sidebar
 -- TAB İÇERİKLERİ
 -- ═══════════════════════════════════════════
 
--- ── COMBAT TAB ──
+-- ── COMBAT ──
 local combatPage = tabPages["Combat"]
 createHeader(combatPage, "HITBOX EXPANDER", 1)
-createToggle(combatPage, "Hitbox Expander", "Düşman hitboxlarını büyüt (kırmızı gösterir)", 2, function(on)
-    toggleHitbox(on)
-end)
-createSlider(combatPage, "Hitbox Boyutu", 5, 1000, 10, 3, function(v)
-    State.HitboxSize = v
-end)
+createToggle(combatPage, "Hitbox Expander", "Düşman hitboxlarını büyüt (kırmızı)", 2, function(on) toggleHitbox(on) end)
+createSlider(combatPage, "Hitbox Boyutu", 0, 1000, 20, 3, function(v) State.HitboxSize = v end)
 
--- ── ANTI-VOID TAB ──
+-- ── ANTI-VOID ──
 local avPage = tabPages["Anti-Void"]
 createHeader(avPage, "Y SEVİYESİ AYARI", 1)
 createSlider(avPage, "Void Y Seviyesi", -50, 100, 12, 2, function(v)
     State.AV_Y = v
-    -- Platform varsa pozisyonunu güncelle
     if AV_Platform and AV_Platform.Parent then
         AV_Platform.Position = Vector3.new(AV_Platform.Position.X, v - 1, AV_Platform.Position.Z)
     end
 end)
-
 createHeader(avPage, "YÖNTEM SEÇ (birden fazla açılabilir)", 3)
+createToggle(avPage, "🔙 Geri Işınlama", "Son güvenli konuma geri ışınlar", 4, function(on) toggleAV_Teleport(on) end)
+createToggle(avPage, "🧊 Dondurma", "Y seviyesinde karakteri dondurur", 5, function(on) toggleAV_Freeze(on) end)
+createToggle(avPage, "🧱 Platform", "Altına görünmez zemin koyar", 6, function(on) toggleAV_Platform(on) end)
+createToggle(avPage, "⬆️ Zıplatma", "Y seviyesinde yukarı fırlatır", 7, function(on) toggleAV_Bounce(on) end)
+createToggle(avPage, "🎈 Havada Tutma", "Y seviyesinde havada asılı tutar", 8, function(on) toggleAV_Float(on) end)
 
-createToggle(avPage, "🔙 Geri Işınlama", "Son güvenli konuma geri ışınlar", 4, function(on)
-    toggleAV_Teleport(on)
-end)
-
-createToggle(avPage, "🧊 Dondurma", "Y seviyesinde karakteri dondurur", 5, function(on)
-    toggleAV_Freeze(on)
-end)
-
-createToggle(avPage, "🧱 Platform", "Altına görünmez zemin koyar", 6, function(on)
-    toggleAV_Platform(on)
-end)
-
-createToggle(avPage, "⬆️ Zıplatma", "Y seviyesinde yukarı fırlatır", 7, function(on)
-    toggleAV_Bounce(on)
-end)
-
-createToggle(avPage, "🎈 Havada Tutma", "Y seviyesinde havada asılı tutar", 8, function(on)
-    toggleAV_Float(on)
-end)
-
--- ── PLAYER TAB ──
+-- ── PLAYER ──
 local playerPage = tabPages["Player"]
 createHeader(playerPage, "HAREKET", 1)
-createToggle(playerPage, "Speed Hack", "Yürüme hızını değiştir", 2, function(on)
-    toggleSpeed(on)
-end)
-createSlider(playerPage, "Hız Değeri", 16, 500, 16, 3, function(v)
-    State.SpeedValue = v
-end)
+createToggle(playerPage, "Speed Hack", "Yürüme hızını değiştir", 2, function(on) toggleSpeed(on) end)
+createSlider(playerPage, "Hız Değeri", 16, 500, 16, 3, function(v) State.SpeedValue = v end)
+createHeader(playerPage, "Q BOOST", 4)
+createToggle(playerPage, "Q Boost", "Q'ya basılı tutunca hız artar", 5, function(on) toggleQBoost(on) end)
+createSlider(playerPage, "Boost Hızı", 20, 200, 30, 6, function(v) State.QBoostSpeed = v end)
+createHeader(playerPage, "KORUMA", 7)
+createToggle(playerPage, "Anti-Knockback", "Geri itilmeyi engelle", 8, function(on) toggleAntiKnockback(on) end)
+createToggle(playerPage, "Anti-Ragdoll", "Ragdoll olmayı engelle", 9, function(on) toggleAntiRagdoll(on) end)
 
--- ── VISUALS TAB ──
+-- ── VISUALS ──
 local visualsPage = tabPages["Visuals"]
-createHeader(visualsPage, "ORTAM", 1)
-createToggle(visualsPage, "Fullbright", "Karanlığı kaldır, haritayı aydınlat", 2, function(on)
-    toggleFullbright(on)
+createHeader(visualsPage, "ESP", 1)
+createToggle(visualsPage, "ESP", "Oyuncuları duvar arkasından gör", 2, function(on) toggleESP(on) end)
+createToggle(visualsPage, "HP Göster", "Can barı ve HP değeri göster", 3, function(on)
+    State.ESP_ShowHealth = on
 end)
+createToggle(visualsPage, "Mesafe Göster", "Kaç metre uzakta olduğunu göster", 4, function(on)
+    State.ESP_ShowDistance = on
+end)
+createToggle(visualsPage, "Takım Filtresi", "Takım arkadaşlarını gizle", 5, function(on)
+    State.ESP_TeamCheck = on
+    refreshESP()
+end)
+createSlider(visualsPage, "ESP Dolgu Şeffaflığı", 0, 100, 70, 6, function(v)
+    State.ESP_FillTransparency = v / 100
+end)
+createHeader(visualsPage, "ORTAM", 7)
+createToggle(visualsPage, "Fullbright", "Karanlığı kaldır, haritayı aydınlat", 8, function(on) toggleFullbright(on) end)
 
 -- ═══════════════════════════════════════════
 -- SÜRÜKLEME
@@ -848,7 +1143,6 @@ end)
 local isVisible = true
 local isMinimized = false
 
--- Sağ Shift ile göster/gizle
 UserInputService.InputBegan:Connect(function(input, processed)
     if processed then return end
     if input.KeyCode == Enum.KeyCode.RightShift then
@@ -857,27 +1151,29 @@ UserInputService.InputBegan:Connect(function(input, processed)
     end
 end)
 
--- Minimize
 minBtn.MouseButton1Click:Connect(function()
     isMinimized = not isMinimized
     if isMinimized then
         tw(mainFrame, 0.3, {Size = UDim2.new(0, 560, 0, 40)})
         minBtn.Text = "□"
-        sidebar.Visible = false
+        footer.Visible = false
     else
-        tw(mainFrame, 0.3, {Size = UDim2.new(0, 560, 0, 420)})
+        tw(mainFrame, 0.3, {Size = UDim2.new(0, 560, 0, 440)})
         minBtn.Text = "─"
-        sidebar.Visible = true
+        footer.Visible = true
     end
 end)
 minBtn.MouseEnter:Connect(function() tw(minBtn, 0.15, {BackgroundColor3 = C.CardHover}) end)
 minBtn.MouseLeave:Connect(function() tw(minBtn, 0.15, {BackgroundColor3 = C.Card}) end)
 
--- Close → tüm özellikleri kapat ve UI'ı yok et
 clsBtn.MouseButton1Click:Connect(function()
     for _, fn in pairs({
         function() toggleHitbox(false) end,
         function() toggleSpeed(false) end,
+        function() toggleQBoost(false) end,
+        function() toggleAntiKnockback(false) end,
+        function() toggleAntiRagdoll(false) end,
+        function() toggleESP(false) end,
         function() toggleFullbright(false) end,
         function() toggleAV_Teleport(false) end,
         function() toggleAV_Freeze(false) end,
@@ -903,16 +1199,16 @@ task.wait(0.2)
 
 TweenService:Create(mainFrame,
     TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-    {Size = UDim2.new(0, 560, 0, 420), BackgroundTransparency = 0}
+    {Size = UDim2.new(0, 560, 0, 440), BackgroundTransparency = 0}
 ):Play()
 task.wait(0.3)
 
--- İlk tabı aç
 tabBtns["Combat"].Btn.MouseButton1Click:Fire()
 
-notify("🥝 Kiwi Hub", "Ability Arena v3.0 yüklendi!\nToggle: Sağ Shift", 4)
+notify("🥝 Kiwi Hub", "Ability Arena v3.1 yüklendi!\nToggle: Sağ Shift | Boost: Q basılı tut", 5)
 print("═══════════════════════════════════════")
-print("  🥝 Kiwi Hub - Ability Arena v3.0.0")
-print("  ⚔️ Hitbox | 🛡️ Anti-Void | ⚡ Speed | 👁️ Fullbright")
-print("  🎮 Toggle: Sağ Shift tuşu")
+print("  🥝 Kiwi Hub - Ability Arena v3.1.0")
+print("  ⚔️ Hitbox | 🛡️ Anti-Void | ⚡ Speed+Q Boost")
+print("  👁️ ESP | 🔒 Anti-KB/Ragdoll | 💡 Fullbright")
+print("  🎮 Toggle: Sağ Shift | Boost: Q basılı tut")
 print("═══════════════════════════════════════")
